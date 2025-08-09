@@ -144,7 +144,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "last":  "姓",
             "program":"目标学位项目",
             "email": "电子邮件",
-            "phone": "电话或微信（选填",
+            "phone": "电话或微信（选填）",
             "consent":"我同意学院以此资料联系我",
             "submit":"提交",
             "err_name":"请输入姓名",
