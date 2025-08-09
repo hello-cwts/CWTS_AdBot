@@ -34,12 +34,5 @@ vectorstore.save_local("faiss_index")
 
 print("✅ 向量库构建完成，已保存为 'faiss_index'")
 
-# 重新加载向量库
-retriever = FAISS.load_local("faiss_index", embedding_model).as_retriever()
 
-# 测试查询
-query = "申请费是多少"
-results = retriever.get_relevant_documents(query)
-print("🔍 查询结果：")
-print(results[0].page_content)
 
