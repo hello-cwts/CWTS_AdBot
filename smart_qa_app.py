@@ -148,7 +148,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "consent":"我同意学院以此资料联系我",
             "submit":"提交",
             "err_name":"请输入姓名",
-            "err_email":"请输入有效",
+            "err_email":"请输入并完成表格",
             "err_consent":"请勾选同意条款",
             "ok":"已收到，感谢！您现在可以提问啦。",
         },
@@ -163,7 +163,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "consent":"我同意學院以此資料聯絡我",
             "submit":"提交",
             "err_name":"請輸入姓名 / Please enter your name",
-            "err_email":"請輸入有效 Email / Please enter a valid email",
+            "err_email":"請輸入並完成表格",
             "err_consent":"請勾選同意條款 / Please provide consent",
             "ok":"已收到，感謝！您現在可以提問囉。",
         },
@@ -375,7 +375,7 @@ if query:
         context = " \n\n".join([d.page_content for d in results[:3]])
         prompt = f"""
 You are an admissions FAQ assistant for Christian Witness Theological Seminary (CWTS).
-Answer briefly, clearly, and warmly, in the same language as the user's question.
+Answer briefly, clearly, and warmly, in the same language as the user's question.鼓励他们完成申请。
 
 Question:
 {query}
