@@ -10,6 +10,10 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 import openai
 
+# 新增：混合检索用
+from rapidfuzz import process, fuzz
+import numpy as np
+
 # =========================
 # Page & Sidebar
 # =========================
@@ -142,7 +146,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "desc":  "为了更好地协助您，请先填写以下信息（仅用于学院招生与服务）。",
             "first": "名",
             "last":  "姓",
-            "program":"目标学位项目",
+            "program":"目标学位项目（请点击选择）",
             "email": "电子邮件",
             "phone": "电话或微信（选填）",
             "consent":"我同意学院以此资料联系我",
@@ -157,7 +161,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "desc":  "為了更好地協助您，請先填寫以下資訊（僅用於學院招生與服務）。",
             "first": "名",
             "last":  "姓",
-            "program":"目標學位項目",
+            "program": "目標學位項目（請點擊選擇）",
             "email": "電子郵件",
             "phone": "電話或微信（選填）",
             "consent":"我同意學院以此資料聯絡我",
@@ -172,7 +176,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "desc":  "To serve you better, please fill out the form below (used for admissions & support only).",
             "first": "First name",
             "last":  "Last name",
-            "program":"Target program",
+            "program": "Target Degree Program (Please Click to Select)",     
             "email": "Email",
             "phone": "Phone or Weixin (optional)",
             "consent":"I consent to be contacted by the seminary",
@@ -184,57 +188,56 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
         }
     }
 
-    program_options = program_options = {
-    "zh": [
-        "教牧博士（DMin）",
-        "神学硕士（ThM）",
-        "道学硕士（MDiv）",
-        "圣经研究硕士（MBS）",
-        "基督教圣工硕士（MCM）",
-        "基督教圣工硕士（网络）（MCM Online）",
-        "神学精要硕士（MTE）",
-        "基督教研究文凭（DCS）",
-        "教会事工文凭（DCL）",
-        "基督工人证书",
-        "家庭事工证书",
-        "儿童事工证书",
-        "宣教事工证书",
-        "其他 / Other"
-    ],
-    "zh-TW": [
-        "教牧博士（DMin）",
-        "神學碩士（ThM）",
-        "道學碩士（MDiv）",
-        "聖經研究碩士（MBS）",
-        "基督教聖工碩士（MCM）",
-        "基督教聖工碩士（網路）（MCM Online）",
-        "神學精要碩士（MTE）",
-        "基督教研究文憑（DCS）",
-        "教會事工文憑（DCL）",
-        "基督工人證書",
-        "家庭事工證書",
-        "兒童事工證書",
-        "宣教事工證書",
-        "其他 / Other"
-    ],
-    "en": [
-        "Doctor of Ministry (DMin)",
-        "Master of Theology (ThM)",
-        "Master of Divinity (MDiv)",
-        "Master of Biblical Studies (MBS)",
-        "Master of Christian Ministry (MCM)",
-        "Master of Christian Ministry (Online) (MCM Online)",
-        "Master of Theological Essentials (MTE)",
-        "Diploma of Christian Studies (DCS)",
-        "Diploma in Church Leadership (DCL)",
-        "Certificate in Servant Leadership / Certificate of Sunday School Teacher / Certificate of Small Group Leader",
-        "Certificate of Family Ministry / Certificate of Family Ministry Teacher",
-        "Certificate of Children Ministry",
-        "Certificate of Evangelism Ministry / Certificate of Evangelism Ministry Teacher",
-        "Other"
-    ]
-}
-
+    program_options = {
+        "zh": [
+            "教牧博士（DMin）",
+            "神学硕士（ThM）",
+            "道学硕士（MDiv）",
+            "圣经研究硕士（MBS）",
+            "基督教圣工硕士（MCM）",
+            "基督教圣工硕士（网络）（MCM Online）",
+            "神学精要硕士（MTE）",
+            "基督教研究文凭（DCS）",
+            "教会事工文凭（DCL）",
+            "基督工人证书",
+            "家庭事工证书",
+            "儿童事工证书",
+            "宣教事工证书",
+            "其他 / Other"
+        ],
+        "zh-TW": [
+            "教牧博士（DMin）",
+            "神學碩士（ThM）",
+            "道學碩士（MDiv）",
+            "聖經研究碩士（MBS）",
+            "基督教聖工碩士（MCM）",
+            "基督教聖工碩士（網路）（MCM Online）",
+            "神學精要碩士（MTE）",
+            "基督教研究文憑（DCS）",
+            "教會事工文憑（DCL）",
+            "基督工人證書",
+            "家庭事工證書",
+            "兒童事工證書",
+            "宣教事工證書",
+            "其他 / Other"
+        ],
+        "en": [
+            "Doctor of Ministry (DMin)",
+            "Master of Theology (ThM)",
+            "Master of Divinity (MDiv)",
+            "Master of Biblical Studies (MBS)",
+            "Master of Christian Ministry (MCM)",
+            "Master of Christian Ministry (Online) (MCM Online)",
+            "Master of Theological Essentials (MTE)",
+            "Diploma of Christian Studies (DCS)",
+            "Diploma in Church Leadership (DCL)",
+            "Certificate in Servant Leadership / Certificate of Sunday School Teacher / Certificate of Small Group Leader",
+            "Certificate of Family Ministry / Certificate of Family Ministry Teacher",
+            "Certificate of Children Ministry",
+            "Certificate of Evangelism Ministry / Certificate of Evangelism Ministry Teacher",
+            "Other"
+        ]
+    }
 
     if "signed_up" not in st.session_state:
         st.session_state.signed_up = False
@@ -253,12 +256,12 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
     """, unsafe_allow_html=True)
 
     with st.form("signup_form", clear_on_submit=False):
-    # —— 名 / 姓：同一行两个 columns ——
+        # —— 名 / 姓：同一行两个 columns ——
         col1, col2 = st.columns(2)
 
         with col1:
             first_name = st.text_input(
-                label=labels[lang_code]["first"],  # 这是标题
+                label=labels[lang_code]["first"],
                 placeholder="e.g., Zach/一凡",
                 max_chars=60
             )
@@ -270,7 +273,6 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
                 max_chars=60
             )
 
-  
         # 其余字段单列即可
         email = st.text_input(labels[lang_code]["email"],
                               key="email_input",
@@ -335,6 +337,88 @@ retriever = load_faiss_index()
 df = load_qa_from_google_sheet()
 
 # =========================
+# Hybrid search helpers
+# =========================
+@st.cache_data(show_spinner=False)
+def build_question_lists(df_all: pd.DataFrame):
+    """
+    为模糊匹配做语言分桶，缓存。
+    """
+    buckets = {}
+    for code in df_all["lang"].dropna().unique():
+        sub = df_all[df_all["lang"] == code].copy()
+        buckets[code] = {
+            "questions": sub["question"].fillna("").tolist(),
+            "rows": sub.reset_index(drop=True),
+        }
+    return buckets
+
+def hybrid_search(query, lang_code, retriever, df_all, topk=6):
+    """
+    关键词子串 + 模糊匹配 + 语义检索；返回若干条用于上下文的文本。
+    """
+    out = []
+    q = (query or "").strip()
+    if not q:
+        return out
+
+    # 1) 关键词子串
+    sub = df_all[df_all["lang"] == lang_code].copy()
+    if not sub.empty:
+        mask = (
+            sub["question"].fillna("").str.contains(q, case=False, regex=False) |
+            sub["answer"].fillna("").str.contains(q, case=False, regex=False)
+        )
+        kw_hits = sub[mask].head(topk)
+        for _, r in kw_hits.iterrows():
+            out.append({
+                "text": f"Q: {r['question']}\nA: {r['answer']}",
+                "source": "keyword",
+                "score": 1.0
+            })
+
+    # 2) 模糊匹配
+    buckets = build_question_lists(df_all)
+    bucket = buckets.get(lang_code)
+    if bucket and bucket["questions"]:
+        matches = process.extract(
+            q, bucket["questions"],
+            scorer=fuzz.WRatio,
+            processor=None,
+            limit=topk
+        )
+        for mtext, mscore, midx in matches:
+            row = bucket["rows"].iloc[midx]
+            out.append({
+                "text": f"Q: {row['question']}\nA: {row['answer']}",
+                "source": "fuzzy",
+                "score": float(mscore) / 100.0
+            })
+
+    # 3) 语义检索
+    try:
+        sem_docs = retriever.get_relevant_documents(q)
+        for d in sem_docs[:topk]:
+            out.append({
+                "text": d.page_content,
+                "source": "semantic",
+                "score": 0.9
+            })
+    except Exception:
+        pass
+
+    # 4) 去重 + 排序
+    seen = set()
+    deduped = []
+    for item in sorted(out, key=lambda x: x["score"], reverse=True):
+        key = item["text"].strip()
+        if key not in seen:
+            deduped.append(item)
+            seen.add(key)
+
+    return deduped[:topk]
+
+# =========================
 # Title & Search prompt (dynamic by lang)
 # =========================
 st.image("logo.png", width=250)
@@ -370,12 +454,16 @@ query = st.text_input(
 )
 
 if query:
-    results = retriever.get_relevant_documents(query)
-    if results:
-        context = " \n\n".join([d.page_content for d in results[:3]])
+    hits = hybrid_search(query, lang_code, retriever, df, topk=6)
+
+    if hits:
+        # 拼接上下文
+        context = "\n\n".join([h["text"] for h in hits[:4]])
+
         prompt = f"""
 You are an admissions FAQ assistant for Christian Witness Theological Seminary (CWTS).
-Answer briefly, clearly, and warmly, in the same language as the user's question.鼓励他们完成申请。
+Answer briefly, clearly, and warmly, in the same language as the user's question.
+Encourage the user to complete the application if appropriate.
 
 Question:
 {query}
@@ -387,20 +475,52 @@ Now write the answer in the user's language:
         """.strip()
 
         client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        resp = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role":"user","content":prompt}],
-            temperature=0.3,
-        )
-        ai_answer = resp.choices[0].message.content.strip()
+
+        # 先显示回答标题
         st.markdown("### 🙋 回答 / Answer")
-        st.success(ai_answer)
+
+        # 加载动画
+        with st.spinner("⏳ 正在生成回答，请稍候..."):
+            resp = (client.chat_completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role":"user","content":prompt}],
+                        temperature=0.3,
+                    ) if hasattr(client, "chat_completions")
+                   else client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role":"user","content":prompt}],
+                        temperature=0.3,
+                   ))
+
+        try:
+            ai_answer = resp.choices[0].message.content.strip()
+        except:
+            ai_answer = (resp.choices[0].delta.content.strip()
+                         if hasattr(resp.choices[0], "delta") and resp.choices[0].delta.content else "")
+
+        st.success(ai_answer or {
+            "zh": "（已生成回答，但解析返回时为空，请稍后重试）",
+            "zh-TW": "（已生成回答，但解析返回時為空，請稍後重試）",
+            "en": "(Answer generated, but response body was empty; please try again.)"
+        }[lang_code])
+
+        # 再显示命中条目
+        with st.expander({
+            "zh": "🔎 命中的相关条目（点击展开）",
+            "zh-TW": "🔎 命中的相關條目（點此展開）",
+            "en": "🔎 Matched items (click to expand)"
+        }[lang_code], expanded=False):
+            for i, h in enumerate(hits, 1):
+                st.markdown(f"**{i}.** {h['text']}\n\n<sub>source: {h['source']}</sub>", unsafe_allow_html=True)
+                st.markdown("<hr>", unsafe_allow_html=True)
+
     else:
         st.info({
-            "zh": "未找到相關內容，請嘗試換個說法提問～",
-            "zh-TW": "未找到相關內容，請嘗試換個說法提問～",
-            "en": "No relevant answer found. Please try rephrasing your question."
+            "zh": "未找到相關內容，請嘗試換個說法或輸入更完整的關鍵字～",
+            "zh-TW": "未找到相關內容，請嘗試換個說法或輸入更完整的關鍵字～",
+            "en": "No relevant answer found. Try rephrasing or adding more keywords."
         }[lang_code])
+
 
 # =========================
 # Q&A List
