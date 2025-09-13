@@ -15,7 +15,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_name("google_creds.json", sc
 client = gspread.authorize(creds)
 
 # Google Sheet 链接（请替换为你自己的链接）
-sheet_url = "https://docs.google.com/spreadsheets/d/1WcNOzUR97NM__k_mFTJrbzhaV18ASYO2cMAZQM7SUx0/edit?gid=1569155313#gid=1569155313"
+sheet_url = "https://docs.google.com/spreadsheets/d/1C3_usehiGvpFTK7YxZwmBh8riVbCQANLvSPLoc1J7hI/edit?gid=0#gid=0"
 sheet = client.open_by_url(sheet_url).sheet1
 
 # 获取数据并转为 DataFrame（要求有 'question' 和 'answer' 两列）

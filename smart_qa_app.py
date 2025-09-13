@@ -5,7 +5,7 @@ from datetime import datetime
 import json
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 import openai
@@ -59,18 +59,23 @@ with st.sidebar:
 # =========================
 # Config: your Google Sheets
 # =========================
-MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/1WcNOzUR97NM__k_mFTJrbzhaV18ASYO2cMAZQM7SUx0/edit#gid=1569155313"
-QA_SHEET_URL     = "https://docs.google.com/spreadsheets/d/1WcNOzUR97NM__k_mFTJrbzhaV18ASYO2cMAZQM7SUx0/edit#gid=1569155313"
+MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/1C3_usehiGvpFTK7YxZwmBh8riVbCQANLvSPLoc1J7hI/edit?gid=0#gid=0"
+QA_SHEET_URL     = "https://docs.google.com/spreadsheets/d/1C3_usehiGvpFTK7YxZwmBh8riVbCQANLvSPLoc1J7hI/edit?gid=0#gid=0"
 
 # =========================
 # Helpers: Google auth & IO
 # =========================
 @st.cache_resource
 def get_gs_client():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
     creds_dict = json.loads(st.secrets["GOOGLE_SHEET_CREDS"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return gspread.authorize(creds)
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    client = gspread.authorize(credentials)
+    return client
+
 
 def append_signup_row(gs_client, sheet_url, row):
     sh = gs_client.open_by_url(sheet_url)
@@ -106,35 +111,100 @@ if "verse_displayed" not in st.session_state:
     st.session_state.verse_displayed = False
 
 quote_area = st.empty()
+quote_area = st.empty()
 if not st.session_state.verse_displayed:
-    quote_area.markdown(f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC&family=Playfair+Display&display=swap');
-    @keyframes fadeInOut {{ 0% {{opacity:0;}} 15% {{opacity:1;}} 85% {{opacity:1;}} 100% {{opacity:0;}} }}
-    .fade-in-out {{ animation: fadeInOut 3s ease-in-out forwards; }}
-    .bible-verse-box {{ background: linear-gradient(to bottom right, rgba(255,255,255,.8), rgba(240,240,240,.85));
-        padding:30px 40px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,.1); display:inline-block; }}
-    </style>
-    <div class="fade-in-out" style="text-align:center; margin-top:60px; margin-bottom:60px;">
-      <div class="bible-verse-box" style="font-family:'Noto Serif SC', serif; font-size:20px; line-height:2; color:#444;">
-        <div style="margin-bottom:18px;">
-            我又聽見主的聲音說：<br>
-            「我可以差遣誰呢？誰肯為我們去呢？」<br>
-            我說：「我在這裡，請差遣我！」<br>
-            —— 《以賽亞書》6:8
-        </div>
-        <div style="font-family:'Playfair Display', serif; font-size:16px; color:#666;">
-            Then I heard the voice of the Lord saying,<br>
-            “Whom shall I send? And who will go for us?”<br>
-            And I said, “Here am I. Send me!”<br>
-            — Isaiah 6:8
-        </div>
-      </div>
+    quote_area.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap');
+
+/* 动画 */
+@keyframes fadeInOut {
+  0% {opacity:0; transform: translateY(8px);}
+  15% {opacity:1; transform: translateY(0);}
+  85% {opacity:1;}
+  100% {opacity:0;}
+}
+.fade-in-out{ animation: fadeInOut 3.2s ease-in-out forwards; }
+
+/* 主题变量（浅/深色） */
+:root{
+  --card-bg: rgba(255,255,255,.86);
+  --card-border: rgba(0,0,0,.06);
+  --text: #2f2f2f;
+  --muted: #666;
+  --accent: #6b4eff;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --card-bg: rgba(24,24,27,.6);
+    --card-border: rgba(255,255,255,.08);
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+  }
+}
+
+/* 布局与卡片 */
+.verse-wrap{
+  display:flex; justify-content:center; align-items:center;
+  margin: 56px 0;
+}
+.verse-card{
+  backdrop-filter: saturate(140%) blur(10px);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 28px 36px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.14);
+  max-width: 760px; width: min(92vw, 760px);
+  text-align: center;
+}
+
+/* 徽标、正文、分隔线、副标题 */
+.badge{
+  display:inline-block;
+  font-size:12px; letter-spacing:.18em; text-transform:uppercase;
+  color: var(--muted);
+  border: 1px solid rgba(107,78,255,.25);
+  background: rgba(107,78,255,.08);
+  padding: 4px 10px; border-radius: 999px;
+  margin-bottom: 10px;
+}
+.verse-text{
+  font-family:'Noto Serif SC', serif;
+  font-size: 22px; line-height: 2; color: var(--text);
+  letter-spacing: .6px;
+}
+.verse-sep{
+  height:1px; width:70%; margin: 12px auto 14px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+}
+.verse-sub{
+  font-size:13px; color: var(--muted);
+}
+
+/* 小屏优化 */
+@media (max-width: 480px){
+  .verse-card{ padding:22px 20px; }
+  .verse-text{ font-size:22px; }
+  .verse-sep{ width:78%; }
+}
+</style>
+<br/>
+      <br/>      
+<div class="verse-wrap fade-in-out">
+  <div class="verse-card">
+    <div class="badge">校訓</div>
+    <div class="verse-text">
+      立於聖言勤於禱<br/>終於使命敏於行
     </div>
-    """, unsafe_allow_html=True)
+    <div class="verse-sep"></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
     time.sleep(4)
     quote_area.empty()
     st.session_state.verse_displayed = True
+
 
 # =========================
 # Signup form (must pass before Q&A)
@@ -203,7 +273,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "家庭事工证书",
             "儿童事工证书",
             "宣教事工证书",
-            "其他 / Other"
+            "不确定"
         ],
         "zh-TW": [
             "教牧博士（DMin）",
@@ -219,7 +289,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "家庭事工證書",
             "兒童事工證書",
             "宣教事工證書",
-            "其他 / Other"
+            "不確定"
         ],
         "en": [
             "Doctor of Ministry (DMin)",
@@ -235,7 +305,7 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
             "Certificate of Family Ministry / Certificate of Family Ministry Teacher",
             "Certificate of Children Ministry",
             "Certificate of Evangelism Ministry / Certificate of Evangelism Ministry Teacher",
-            "Other"
+            "Undecided"
         ]
     }
 
@@ -446,9 +516,11 @@ st.markdown(f"""
 query = st.text_input(
     label="query_input",
     placeholder={
-        "zh": "請在此輸入問題……（支持简体 / 繁體 / English）",
-        "zh-TW": "請在此輸入問題……（支援簡體 / 繁體 / English）",
-        "en": "Enter your question here… (Chinese/English supported)"
+            "zh": "請在此輸入問題……（支持简体 / 繁體 / English）... 按回车提交问题",
+            "zh-TW": "請在此輸入問題……（支援簡體 / 繁體 / English） ... 按下 Enter 提交問題",
+            "en": "Enter your question here… (Chinese/English supported) ...Press Enter to submit",
+
+
     }[lang_code],
     label_visibility="collapsed"
 )
@@ -461,18 +533,27 @@ if query:
         context = "\n\n".join([h["text"] for h in hits[:4]])
 
         prompt = f"""
-You are an admissions FAQ assistant for Christian Witness Theological Seminary (CWTS) only can answer the question about this school and admission.
-Answer briefly, clearly, and warmly, in the same language（Simplified Chinese/Traditional Chinese/English as the user's question.
-Encourage the user to complete the application if appropriate. 
+            You are an admissions FAQ assistant for Christian Witness Theological Seminary (CWTS).
+            You must only answer questions about CWTS and its admissions process.
 
-Question:
-{query}
+            Rules:
+            1. Detect the language of the user's question. It can be English, Simplified Chinese, or Traditional Chinese.
+            2. ALWAYS answer in the SAME language as the user's question, even if all context is in another language.
+            3. If the context is not in the same language, translate the relevant facts into the user's language before answering.
+            4. Make your answer concise, clear, and warm. Do not dump all context verbatim — summarize the key points.
+            5. Encourage the user to complete or begin their application if appropriate.
+            6. If the user's question is unrelated to CWTS admissions, politely say you can only answer admissions-related questions.
 
-Relevant context (may contain Q&A snippets):
-{context}
+            ---
+            User Question:
+            {query}
 
-Now write the answer in the user's language:
-        """.strip()
+            Relevant Q&A Context (may be in other languages):
+            {context}
+            ---
+
+            Now write your final answer ONLY in the SAME language as the user's question:
+            """.strip()
 
         client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
@@ -542,3 +623,4 @@ for i, row in filtered_df.iterrows():
     st.markdown(f"**Q{i+1}: {row['question']}**")
     st.markdown(f"👉 {row['answer']}")
     st.markdown("<hr style='margin-top: 16px; margin-bottom: 24px;'>", unsafe_allow_html=True)
+
