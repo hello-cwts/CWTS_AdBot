@@ -39,7 +39,7 @@ with st.sidebar:
         <a href="https://www.cwts.edu/zh/admissions/application-procedure/" target="_blank"
            style="display:inline-block;font-size:14px;color:#000;text-decoration:none;border:1px solid #000;
                   padding:6px 12px;border-radius:6px;background-color:#fff;">
-           👉 开始申请 / Apply Now
+           👉 申請鏈接 / Apply Now
         </a>
         """,
         unsafe_allow_html=True
@@ -59,9 +59,8 @@ with st.sidebar:
 # =========================
 # Config: your Google Sheets
 # =========================
-MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/1C3_usehiGvpFTK7YxZwmBh8riVbCQANLvSPLoc1J7hI/edit?gid=0#gid=0"
-QA_SHEET_URL     = "https://docs.google.com/spreadsheets/d/1C3_usehiGvpFTK7YxZwmBh8riVbCQANLvSPLoc1J7hI/edit?gid=0#gid=0"
-
+MASTER_SHEET_URL = st.secrets["GOOGLE_SHEET_ID"]
+QA_SHEET_URL     = st.secrets["GOOGLE_SHEET_ID"]
 # =========================
 # Helpers: Google auth & IO
 # =========================
@@ -214,45 +213,45 @@ def show_signup_form(lang_code: str, sheet_url_master: str):
         "zh": {
             "title": "📝 基本信息 / Basic Info",
             "desc":  "为了更好地协助您，请先填写以下信息（仅用于学院招生与服务）。",
-            "first": "名",
-            "last":  "姓",
-            "program":"目标学位项目（请点击选择）",
-            "email": "电子邮件",
+            "first": "名*",
+            "last":  "姓*",
+            "program":"目标学位项目*（请点击下拉选择）",
+            "email": "电子邮件*",
             "phone": "电话或微信（选填）",
-            "consent":"我同意学院以此资料联系我",
+            "consent":"我同意学院以此资料联系我*",
             "submit":"提交",
             "err_name":"请输入姓名",
-            "err_email":"请输入并完成表格",
+            "err_email":"请输入正确完整的邮箱并完成表格",
             "err_consent":"请勾选同意条款",
             "ok":"已收到，感谢！您现在可以提问啦。",
         },
         "zh-TW": {
             "title": "📝 基本資訊 / Basic Info",
             "desc":  "為了更好地協助您，請先填寫以下資訊（僅用於學院招生與服務）。",
-            "first": "名",
-            "last":  "姓",
-            "program": "目標學位項目（請點擊選擇）",
-            "email": "電子郵件",
+            "first": "名*",
+            "last":  "姓*",
+            "program": "目標學位項目*（請點擊下拉選擇）",
+            "email": "電子郵件*",
             "phone": "電話或微信（選填）",
-            "consent":"我同意學院以此資料聯絡我",
+            "consent":"我同意學院以此資料聯絡我*",
             "submit":"提交",
             "err_name":"請輸入姓名 / Please enter your name",
-            "err_email":"請輸入並完成表格",
+            "err_email":"請輸入正確完整的郵箱並完成表格",
             "err_consent":"請勾選同意條款 / Please provide consent",
             "ok":"已收到，感謝！您現在可以提問囉。",
         },
         "en": {
             "title": "📝 Basic Info",
             "desc":  "To serve you better, please fill out the form below (used for admissions & support only).",
-            "first": "First name",
-            "last":  "Last name",
-            "program": "Target Degree Program (Please Click to Select)",     
-            "email": "Email",
+            "first": "First name*",
+            "last":  "Last name*",
+            "program": "Target Degree Program* (Please Click to Select)",     
+            "email": "Email*",
             "phone": "Phone or Weixin (optional)",
-            "consent":"I consent to be contacted by the seminary",
+            "consent":"I consent to be contacted by the seminary*",
             "submit":"Submit",
             "err_name":"Please enter your name",
-            "err_email":"Please enter a valid email",
+            "err_email":"Please provide a valid email and complete the form.",
             "err_consent":"Please provide consent",
             "ok":"Thank you! You can ask questions now.",
         }
