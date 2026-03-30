@@ -10,6 +10,11 @@ jobs:
   rebuild:
     runs-on: ubuntu-latest
 
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_SHEET_B_ID: ${{ secrets.GOOGLE_SHEET_B_ID }}
+      GOOGLE_SHEET_CREDS: ${{ secrets.GOOGLE_SHEET_CREDS }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,15 +26,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Write secrets
-        run: |
-          mkdir -p .streamlit
-          cat > .streamlit/secrets.toml << 'EOF'
-          OPENAI_API_KEY = "${{ secrets.OPENAI_API_KEY }}"
-          GOOGLE_SHEET_B_ID = "${{ secrets.GOOGLE_SHEET_B_ID }}"
-          GOOGLE_SHEET_CREDS = '${{ secrets.GOOGLE_SHEET_CREDS }}'
-          EOF
 
       - name: Run scraper
         run: python scraper.py

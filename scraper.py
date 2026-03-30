@@ -30,21 +30,36 @@ from config import (
 # secrets 读取（兼容命令行和 Streamlit）
 # =========================
 def load_secrets() -> dict:
+    """读取 secrets，兼容 Streamlit、命令行、GitHub Actions 三种环境"""
+    import os
+
+    # 优先从环境变量读（GitHub Actions）
+    if os.environ.get("OPENAI_API_KEY"):
+        return {
+            "OPENAI_API_KEY":     os.environ["OPENAI_API_KEY"],
+            "GOOGLE_SHEET_B_ID":  os.environ["GOOGLE_SHEET_B_ID"],
+            "GOOGLE_SHEET_CREDS": os.environ["GOOGLE_SHEET_CREDS"],
+        }
+
+    # 其次从 Streamlit secrets 读
     try:
         import streamlit as st
         return {
-            "OPENAI_API_KEY":    st.secrets["OPENAI_API_KEY"],
+            "OPENAI_API_KEY":     st.secrets["OPENAI_API_KEY"],
+            "GOOGLE_SHEET_B_ID":  st.secrets["GOOGLE_SHEET_B_ID"],
             "GOOGLE_SHEET_CREDS": st.secrets["GOOGLE_SHEET_CREDS"],
-            "GOOGLE_SHEET_B_ID": st.secrets["GOOGLE_SHEET_B_ID"],
         }
     except Exception:
-        with open(".streamlit/secrets.toml", "rb") as f:
-            s = tomllib.load(f)
-        return {
-            "OPENAI_API_KEY":    s["OPENAI_API_KEY"],
-            "GOOGLE_SHEET_CREDS": s["GOOGLE_SHEET_CREDS"],
-            "GOOGLE_SHEET_B_ID": s["GOOGLE_SHEET_B_ID"],
-        }
+        pass
+
+    # 最后从本地 secrets.toml 读（本地命令行）
+    with open(".streamlit/secrets.toml", "rb") as f:
+        s = tomllib.load(f)
+    return {
+        "OPENAI_API_KEY":     s["OPENAI_API_KEY"],
+        "GOOGLE_SHEET_B_ID":  s["GOOGLE_SHEET_B_ID"],
+        "GOOGLE_SHEET_CREDS": s["GOOGLE_SHEET_CREDS"],
+    }
 
 
 # =========================
