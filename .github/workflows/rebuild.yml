@@ -27,7 +27,6 @@ jobs:
           mkdir -p .streamlit
           cat > .streamlit/secrets.toml << 'EOF'
           OPENAI_API_KEY = "${{ secrets.OPENAI_API_KEY }}"
-          GOOGLE_SHEET_ID = "${{ secrets.GOOGLE_SHEET_ID }}"
           GOOGLE_SHEET_B_ID = "${{ secrets.GOOGLE_SHEET_B_ID }}"
           GOOGLE_SHEET_CREDS = '${{ secrets.GOOGLE_SHEET_CREDS }}'
           EOF
