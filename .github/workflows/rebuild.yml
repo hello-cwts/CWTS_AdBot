@@ -1,0 +1,44 @@
+name: Rebuild FAISS Index
+
+on:
+  schedule:
+    # 太平洋时间凌晨2点 = UTC 10:00
+    - cron: '0 10 * * *'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write secrets
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml << 'EOF'
+          OPENAI_API_KEY = "${{ secrets.OPENAI_API_KEY }}"
+          GOOGLE_SHEET_ID = "${{ secrets.GOOGLE_SHEET_ID }}"
+          GOOGLE_SHEET_B_ID = "${{ secrets.GOOGLE_SHEET_B_ID }}"
+          GOOGLE_SHEET_CREDS = '${{ secrets.GOOGLE_SHEET_CREDS }}'
+          EOF
+
+      - name: Run scraper
+        run: python scraper.py
+
+      - name: Commit updated index
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add faiss_index/ faiss_index_qa/
+          git diff --staged --quiet || git commit -m "chore: rebuild faiss index $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
