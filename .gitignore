@@ -1,4 +1,19 @@
-
 # secrets
 .streamlit/secrets.toml
 google_creds.json
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# 临时文件
+last_rebuild.txt
+test.py
+test_*.py
+main
+
+# 旧文件
+smart_qa_app.py
+import_json.py
+build_faiss.py
