@@ -269,8 +269,8 @@ def show_signup_form():
 
     with st.form("signup_form", clear_on_submit=False):
         col1, col2 = st.columns(2)
-        first_name = col1.text_input(lbl["first"], placeholder="e.g. 一凡", max_chars=60)
-        last_name  = col2.text_input(lbl["last"],  placeholder="e.g. 魏",   max_chars=60)
+        first_name = col1.text_input(lbl["first"], placeholder="e.g. 三 San", max_chars=60)
+        last_name  = col2.text_input(lbl["last"],  placeholder="e.g. 张 Zhang",   max_chars=60)
         email      = st.text_input(lbl["email"],   placeholder="name@example.com", max_chars=120)
         phone      = st.text_input(lbl["phone"],   placeholder="+1 650-123-4567", max_chars=60)
         program    = st.selectbox(lbl["program"],  PROGRAM_OPTIONS[lang_code])
