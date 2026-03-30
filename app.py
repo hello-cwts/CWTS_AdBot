@@ -168,22 +168,6 @@ def async_rebuild():
 
 
 # =========================
-# 向量库预热（后台线程，不阻塞页面渲染）
-# =========================
-def _preload_retrievers():
-    try:
-        load_faiss_retriever()
-        load_qa_faiss_retriever()
-    except Exception:
-        pass
-
-if "retrievers_loaded" not in st.session_state:
-    st.session_state.retrievers_loaded = False
-    preload_thread = threading.Thread(target=_preload_retrievers, daemon=True)
-    preload_thread.start()
-
-
-# =========================
 # 校训动画（只显示一次）
 # =========================
 if "verse_displayed" not in st.session_state:
