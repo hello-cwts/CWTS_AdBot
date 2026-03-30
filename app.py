@@ -1,6 +1,22 @@
 """
 app.py
 CWTS 招生FAQ Chatbot v2
+
+改动说明：
+[优化1] fuzzy_match_qa（第~140行）
+  - 在任何 API 调用前先做 rapidfuzz 模糊匹配（阈值85）
+  - 命中直接返回 qa_bank 答案，跳过 embedding + GPT，节省成本和时间
+
+[优化2] k 值缩减（第~115、~128行）
+  - 网站 FAISS k: 5 → 3
+  - qa_bank FAISS k: 3 → 2
+  - GPT context chunks: 4 → 3
+  - 减少 embedding 查询量和 GPT token 消耗
+
+[优化3] GPT Prompt 优化（第~360行）
+  - 明确说明 context 可能是中文，英文问题也要理解中文 context
+  - 降低 UNANSWERABLE 门槛：有部分相关信息就尝试回答
+  - 地点/联系方式/基本信息类问题：即使不完整也给出部分回答
 """
 
 import time
@@ -17,6 +33,7 @@ from config import (
 )
 from sheets import (
     get_or_create_conversation_id,
+    load_qa_bank,
     append_signup_row,
     append_pending_row,
     append_unanswered_row,
@@ -110,6 +127,7 @@ def t(key: str) -> str:
 
 # =========================
 # FAISS 检索器
+# [优化2] k 值：网站 5→3，qa_bank 3→2
 # =========================
 @st.cache_resource(ttl=3600)
 def load_faiss_retriever():
@@ -122,7 +140,7 @@ def load_faiss_retriever():
     return FAISS.load_local(
         FAISS_INDEX_PATH, embeddings,
         allow_dangerous_deserialization=True,
-    ).as_retriever(search_kwargs={"k": 5})
+    ).as_retriever(search_kwargs={"k": 3})
 
 
 @st.cache_resource(ttl=3600)
@@ -136,7 +154,7 @@ def load_qa_faiss_retriever():
     return FAISS.load_local(
         "faiss_index_qa", embeddings,
         allow_dangerous_deserialization=True,
-    ).as_retriever(search_kwargs={"k": 3})
+    ).as_retriever(search_kwargs={"k": 2})
 
 
 # =========================
@@ -165,6 +183,54 @@ def async_rebuild():
         load_qa_faiss_retriever.clear()
     except Exception as e:
         print(f"[后台重建失败] {e}")
+
+
+# =========================
+# [优化1] 精确匹配缓存
+# 用 rapidfuzz 在 embedding/GPT 之前先做字符串匹配
+# =========================
+def _normalize(text: str) -> str:
+    """标准化：转小写、去标点、合并空格"""
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text
+
+
+@st.cache_data(ttl=300)
+def _load_qa_pairs() -> list[dict]:
+    """从 Google Sheet 加载 qa_bank，5分钟缓存，staff 更新后快速生效"""
+    df = load_qa_bank()
+    pairs = []
+    for _, row in df.iterrows():
+        q = str(row.get("question", "")).strip()
+        a = str(row.get("answer", "")).strip()
+        if q and a:
+            pairs.append({"question": q, "answer": a, "normalized": _normalize(q)})
+    return pairs
+
+
+def fuzzy_match_qa(query: str) -> str | None:
+    """
+    对 query 做 rapidfuzz 模糊匹配（阈值 85）。
+    命中返回对应 answer，未命中返回 None。
+    跳过所有 embedding 和 GPT 调用。
+    """
+    try:
+        from rapidfuzz import process, fuzz
+        pairs = _load_qa_pairs()
+        if not pairs:
+            return None
+        normalized_query = _normalize(query)
+        choices = {p["normalized"]: p["answer"] for p in pairs}
+        result = process.extractOne(
+            normalized_query, list(choices.keys()), scorer=fuzz.WRatio
+        )
+        if result and result[1] >= 85:
+            return choices[result[0]]
+    except Exception:
+        pass
+    return None
 
 
 # =========================
@@ -317,6 +383,7 @@ def search_faiss(query: str) -> list[dict]:
     except Exception:
         return []
 
+
 def search_qa_bank(query: str) -> list[dict]:
     try:
         retriever = load_qa_faiss_retriever()
@@ -327,13 +394,33 @@ def search_qa_bank(query: str) -> list[dict]:
 
 
 # =========================
+# 英文查询翻译为中文（用于检索）
+# =========================
+def translate_to_chinese(query: str) -> str:
+    import openai
+    client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Translate the following question into Traditional Chinese. Output only the translation, nothing else."},
+            {"role": "user", "content": query},
+        ],
+        temperature=0,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+# =========================
 # GPT 生成答案
+# [优化2] context chunks: 4 → 3
+# [优化3] prompt 优化：降低 UNANSWERABLE 门槛，支持部分回答
 # =========================
 UNANSWERABLE_MARKER = "UNANSWERABLE"
 
 def generate_answer(query: str, context_chunks: list[dict]) -> str:
     import openai
-    context = "\n\n".join([c["text"] for c in context_chunks[:4]])
+    # [优化2] 从 4 条改为 3 条，减少 token 消耗
+    context = "\n\n".join([c["text"] for c in context_chunks[:3]])
     lang_name = {"zh": "Simplified Chinese", "zh-TW": "Traditional Chinese", "en": "English"}[lang_code]
 
     system_prompt = f"""You are an admissions FAQ assistant for Christian Witness Theological Seminary (CWTS).
@@ -347,18 +434,21 @@ You can answer questions about:
 - Accreditation and international student (F-1 visa / I-20) information
 
 Always respond in {lang_name}, regardless of the language of the context provided.
+The context may be in Chinese even when the question is in English — this is expected. Read and understand the Chinese context, then answer in {lang_name}.
 Be warm, concise, and encouraging. When mentioning a faculty member, make it personal and inviting — help the applicant feel connected to the seminary community.
 
-IMPORTANT: If the context does not contain enough information to answer the question confidently,
-you MUST reply with exactly this single word and nothing else: {UNANSWERABLE_MARKER}
-Do NOT guess, do NOT make up information, do NOT say "the seminary does not offer X" unless the context explicitly states it."""
+ANSWERING RULES:
+1. If the context contains relevant information, even partial, use it to give the best possible answer. Do not require a perfect match.
+2. For questions about location, address, contact info, or basic school facts: if the context has any related information, provide it and suggest contacting admissions@cwts.edu for details.
+3. Only reply with {UNANSWERABLE_MARKER} if the context has absolutely no relevant information whatsoever.
+4. Do NOT guess, do NOT make up information not present in the context."""
 
     user_prompt = f"""Question: {query}
 
 Relevant context:
 {context}
 
-If the context does not clearly answer the question, reply with exactly: {UNANSWERABLE_MARKER}"""
+Answer in {lang_name}. If the context has any relevant information, use it. Only reply with exactly "{UNANSWERABLE_MARKER}" if the context is completely unrelated."""
 
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     resp = client.chat.completions.create(
@@ -415,46 +505,64 @@ if query:
     first, *rest = name.split() if name else ("", [])
     last = " ".join(rest)
 
-    # 同时搜网站向量库和 qa_bank，合并结果
-    hits = search_faiss(query)
-    qa_hits = search_qa_bank(query)
-
-    # qa_bank 结果优先放前面（staff维护的答案更可靠）
-    combined = qa_hits + hits
-
-    # 去重
-    seen = set()
-    hits = []
-    for h in combined:
-        key = h["text"][:100]
-        if key not in seen:
-            hits.append(h)
-            seen.add(key)
-
-    if hits:
+    # --------------------------------------------------
+    # [优化1] 第一步：rapidfuzz 精确匹配，命中直接返回
+    # 跳过所有 embedding + GPT 调用，最快路径
+    # --------------------------------------------------
+    fuzzy_answer = fuzzy_match_qa(query)
+    if fuzzy_answer:
         st.markdown(t("answer_title"))
-        with st.spinner(t("thinking")):
-            answer = generate_answer(query, hits)
+        st.success(fuzzy_answer)
+        append_pending_row(conv_id, lang_code, first, last, email, program, query, fuzzy_answer)
 
-        if answer == UNANSWERABLE_MARKER:
+    else:
+        # --------------------------------------------------
+        # 第二步：向量检索 + GPT 生成
+        # --------------------------------------------------
+        if lang_code == "en":
+            zh_query = translate_to_chinese(query)
+            hits    = search_faiss(query) + search_faiss(zh_query)
+            qa_hits = search_qa_bank(query) + search_qa_bank(zh_query)
+        else:
+            hits    = search_faiss(query)
+            qa_hits = search_qa_bank(query)
+
+        # qa_bank 结果优先放前面（staff 维护的答案更可靠）
+        combined = qa_hits + hits
+
+        # 去重
+        seen = set()
+        hits = []
+        for h in combined:
+            key = h["text"][:100]
+            if key not in seen:
+                hits.append(h)
+                seen.add(key)
+
+        if hits:
+            st.markdown(t("answer_title"))
+            with st.spinner(t("thinking")):
+                answer = generate_answer(query, hits)
+
+            if answer == UNANSWERABLE_MARKER:
+                st.info(t("no_result"))
+                append_unanswered_row(
+                    conv_id, lang_code, first, last,
+                    email, phone, program, query, "",
+                )
+            else:
+                st.success(answer)
+                append_pending_row(conv_id, lang_code, first, last, email, program, query, answer)
+
+                with st.expander(t("source_expander"), expanded=False):
+                    for i, h in enumerate(hits, 1):
+                        src = f"[{h['source']}]({h['source']})" if h["source"].startswith("http") else h["source"]
+                        st.markdown(f"**{i}.** {h['text'][:300]}…\n\n<sub>来源: {src}</sub>",
+                                    unsafe_allow_html=True)
+                        st.markdown("<hr>", unsafe_allow_html=True)
+        else:
             st.info(t("no_result"))
             append_unanswered_row(
                 conv_id, lang_code, first, last,
                 email, phone, program, query, "",
             )
-        else:
-            st.success(answer)
-            append_pending_row(conv_id, lang_code, first, last, email, program, query, answer)
-
-            with st.expander(t("source_expander"), expanded=False):
-                for i, h in enumerate(hits, 1):
-                    src = f"[{h['source']}]({h['source']})" if h["source"].startswith("http") else h["source"]
-                    st.markdown(f"**{i}.** {h['text'][:300]}…\n\n<sub>来源: {src}</sub>",
-                                unsafe_allow_html=True)
-                    st.markdown("<hr>", unsafe_allow_html=True)
-    else:
-        st.info(t("no_result"))
-        append_unanswered_row(
-            conv_id, lang_code, first, last,
-            email, phone, program, query, "",
-        )
