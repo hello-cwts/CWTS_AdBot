@@ -6,6 +6,7 @@ scraper.py
   - 自动：用 Windows Task Scheduler 每天定时运行
 """
 
+import re
 import time
 import json
 import tomllib
@@ -27,6 +28,18 @@ from config import (
 
 
 # =========================
+# 工具函数
+# =========================
+def fix_creds_json(raw: str) -> str:
+    """修复 private_key 里的真实换行符，使 json.loads 能正常解析"""
+    return re.sub(
+        r'("private_key"\s*:\s*")(.*?)(")',
+        lambda m: m.group(1) + m.group(2).replace('\n', '\\n') + m.group(3),
+        raw, flags=re.DOTALL
+    )
+
+
+# =========================
 # secrets 读取（兼容命令行和 Streamlit）
 # =========================
 def load_secrets() -> dict:
@@ -42,7 +55,7 @@ def load_secrets() -> dict:
             "GOOGLE_SHEET_CREDS": creds,
         }
 
-    # 其次从 Streamlit secrets 读
+    # 其次从 Streamlit secrets 读（Streamlit 会把 JSON 自动解析成 dict，保持原样）
     try:
         import streamlit as st
         return {
@@ -59,7 +72,7 @@ def load_secrets() -> dict:
     return {
         "OPENAI_API_KEY":     s["OPENAI_API_KEY"],
         "GOOGLE_SHEET_B_ID":  s["GOOGLE_SHEET_B_ID"],
-        "GOOGLE_SHEET_CREDS": s["GOOGLE_SHEET_CREDS"],
+        "GOOGLE_SHEET_CREDS": fix_creds_json(s["GOOGLE_SHEET_CREDS"]),
     }
 
 
@@ -153,7 +166,16 @@ def build_qa_faiss_index(openai_api_key: str, secrets: dict) -> int:
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        creds_dict = json.loads(secrets["GOOGLE_SHEET_CREDS"])
+        creds_raw = secrets["GOOGLE_SHEET_CREDS"]
+        if isinstance(creds_raw, dict):
+            creds_dict = creds_raw  # Streamlit 已自动解析成 dict
+        elif isinstance(creds_raw, str):
+            fixed = re.sub(
+                r'("private_key"\s*:\s*")(.*?)(")',
+                lambda m: m.group(1) + m.group(2).replace('\n', '\\n') + m.group(3),
+                creds_raw, flags=re.DOTALL
+            )
+            creds_dict = json.loads(fixed)
         credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         client = gspread.authorize(credentials)
         ws = client.open_by_url(secrets["GOOGLE_SHEET_B_ID"]).worksheet("qa_bank")
