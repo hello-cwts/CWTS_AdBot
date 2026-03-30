@@ -7,10 +7,9 @@ Sheet B (GOOGLE_SHEET_B_ID) → qa_bank / pending / unanswered
 """
 
 import json
-import uuid
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 
 import gspread
 import pandas as pd
@@ -27,7 +26,7 @@ from config import (
 # =========================
 # Auth
 # =========================
-@st.cache_resource
+@st.cache_resource(ttl=3600)
 def get_gs_client():
     SCOPES = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -43,7 +42,7 @@ def get_gs_client():
 # =========================
 def generate_conversation_id() -> str:
     """生成唯一对话ID，格式：conv_20260328_a3f7"""
-    date_str = datetime.utcnow().strftime("%Y%m%d")
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
     return f"conv_{date_str}_{suffix}"
 
@@ -89,7 +88,7 @@ def append_signup_row(conversation_id: str, lang: str, first_name: str,
 
         ws.append_row([
             conversation_id,
-            datetime.utcnow().isoformat(),
+            datetime.now(timezone.utc).isoformat(),
             lang,
             first_name,
             last_name,
@@ -149,7 +148,7 @@ def append_pending_row(conversation_id: str, lang: str, first_name: str,
 
         ws.append_row([
             conversation_id,
-            datetime.utcnow().isoformat(),
+            datetime.now(timezone.utc).isoformat(),
             lang,
             first_name,
             last_name,
@@ -183,7 +182,7 @@ def append_unanswered_row(conversation_id: str, lang: str, first_name: str,
 
         ws.append_row([
             conversation_id,
-            datetime.utcnow().isoformat(),
+            datetime.now(timezone.utc).isoformat(),
             lang,
             first_name,
             last_name,

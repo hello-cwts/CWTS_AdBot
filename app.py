@@ -6,7 +6,7 @@ CWTS 招生FAQ Chatbot v2
 import time
 import streamlit as st
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import (
@@ -17,7 +17,6 @@ from config import (
 )
 from sheets import (
     get_or_create_conversation_id,
-    load_qa_bank,
     append_signup_row,
     append_pending_row,
     append_unanswered_row,
@@ -149,13 +148,13 @@ LAST_REBUILD_FILE = "last_rebuild.txt"
 def should_rebuild() -> bool:
     try:
         last = float(Path(LAST_REBUILD_FILE).read_text().strip())
-        elapsed = (datetime.utcnow().timestamp() - last) / 3600
+        elapsed = (datetime.now(timezone.utc).timestamp() - last) / 3600
         return elapsed >= REBUILD_INTERVAL_HOURS
     except Exception:
         return True
 
 def mark_rebuilt():
-    Path(LAST_REBUILD_FILE).write_text(str(datetime.utcnow().timestamp()))
+    Path(LAST_REBUILD_FILE).write_text(str(datetime.now(timezone.utc).timestamp()))
 
 def async_rebuild():
     try:
@@ -317,7 +316,6 @@ def search_faiss(query: str) -> list[dict]:
         return [{"text": d.page_content, "source": d.metadata.get("source", "")} for d in docs]
     except Exception:
         return []
-
 
 def search_qa_bank(query: str) -> list[dict]:
     try:

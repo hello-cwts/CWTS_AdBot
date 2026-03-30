@@ -11,17 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 修复 Node.js 20 deprecation warning
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 完整克隆，避免 git pull --rebase 找不到公共祖先
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'  # 缓存 pip 依赖，加快构建速度
 
       - name: Install dependencies
         run: pip install -r requirements.txt
