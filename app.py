@@ -269,8 +269,8 @@ def show_signup_form():
 
     with st.form("signup_form", clear_on_submit=False):
         col1, col2 = st.columns(2)
-        first_name = col1.text_input(lbl["first"], placeholder="e.g. 三 San", max_chars=60)
-        last_name  = col2.text_input(lbl["last"],  placeholder="e.g. 张 Zhang",   max_chars=60)
+        first_name = col1.text_input(lbl["first"], placeholder="e.g. 一凡", max_chars=60)
+        last_name  = col2.text_input(lbl["last"],  placeholder="e.g. 魏",   max_chars=60)
         email      = st.text_input(lbl["email"],   placeholder="name@example.com", max_chars=120)
         phone      = st.text_input(lbl["phone"],   placeholder="+1 650-123-4567", max_chars=60)
         program    = st.selectbox(lbl["program"],  PROGRAM_OPTIONS[lang_code])
@@ -386,14 +386,23 @@ st.markdown(f"""
 # 注册门控
 show_signup_form()
 
-# 搜索框
+# 搜索框 + 提交按钮
 st.markdown(f"<h4 style='font-weight:400;margin-top:20px;'><strong>{t('search_prompt')}</strong></h4>",
             unsafe_allow_html=True)
-query = st.text_input(
-    label="query",
-    placeholder=t("input_placeholder"),
-    label_visibility="collapsed",
-)
+
+with st.form("query_form", clear_on_submit=False):
+    query = st.text_input(
+        label="query",
+        placeholder=t("input_placeholder"),
+        label_visibility="collapsed",
+    )
+    submitted = st.form_submit_button(
+        {"zh": "提交问题 →", "zh-TW": "提交問題 →", "en": "Submit →"}[lang_code],
+        use_container_width=True,
+    )
+
+if not submitted:
+    query = None
 
 # =========================
 # 检索 + 回答
