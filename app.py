@@ -391,15 +391,15 @@ st.markdown(f"<h4 style='font-weight:400;margin-top:20px;'><strong>{t('search_pr
             unsafe_allow_html=True)
 
 with st.form("query_form", clear_on_submit=False):
-    query = st.text_input(
-        label="query",
-        placeholder=t("input_placeholder"),
-        label_visibility="collapsed",
-    )
-    submitted = st.form_submit_button(
-        {"zh": "提交问题 →", "zh-TW": "提交問題 →", "en": "Submit →"}[lang_code],
-        use_container_width=True,
-    )
+    col1, col2 = st.columns([11, 1])
+    with col1:
+        query = st.text_input(
+            label="query",
+            placeholder=t("input_placeholder"),
+            label_visibility="collapsed",
+        )
+    with col2:
+        submitted = st.form_submit_button("→", use_container_width=True)
 
 if not submitted:
     query = None
