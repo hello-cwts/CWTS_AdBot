@@ -9,6 +9,8 @@ on:
 jobs:
   rebuild:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

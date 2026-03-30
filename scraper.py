@@ -35,10 +35,11 @@ def load_secrets() -> dict:
 
     # 优先从环境变量读（GitHub Actions）
     if os.environ.get("OPENAI_API_KEY"):
+        creds = os.environ["GOOGLE_SHEET_CREDS"].replace("\\n", "\n")
         return {
             "OPENAI_API_KEY":     os.environ["OPENAI_API_KEY"],
             "GOOGLE_SHEET_B_ID":  os.environ["GOOGLE_SHEET_B_ID"],
-            "GOOGLE_SHEET_CREDS": os.environ["GOOGLE_SHEET_CREDS"],
+            "GOOGLE_SHEET_CREDS": creds,
         }
 
     # 其次从 Streamlit secrets 读
