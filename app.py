@@ -497,6 +497,14 @@ if not submitted:
 # 检索 + 回答
 # =========================
 if query:
+    st.write(f"DEBUG lang_code={lang_code}")  # ← 加这行
+    
+    if lang_code == "en":
+        zh_test = translate_to_chinese(query)
+        st.write(f"DEBUG 翻译结果: {zh_test}")
+        fuzzy_test = fuzzy_match_qa(zh_test)
+        st.write(f"DEBUG fuzzy命中: {fuzzy_test}")
+        
     conv_id  = get_or_create_conversation_id()
     name     = st.session_state.get("user_name", "")
     email    = st.session_state.get("user_email", "")
