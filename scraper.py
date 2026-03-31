@@ -48,12 +48,12 @@ def load_secrets() -> dict:
 
     # 优先从环境变量读（GitHub Actions）
     if os.environ.get("OPENAI_API_KEY"):
-        creds = os.environ["GOOGLE_SHEET_CREDS"].replace("\\n", "\n")
-        creds = fix_creds_json(creds)  # 保险处理
+        # env var 里是合法 JSON（\n 是 JSON 转义序列），直接原样传给调用方，
+        # 由调用方 json.loads 解析，不要提前 replace（会产生非法 JSON）
         return {
             "OPENAI_API_KEY":     os.environ["OPENAI_API_KEY"],
             "GOOGLE_SHEET_B_ID":  os.environ["GOOGLE_SHEET_B_ID"],
-            "GOOGLE_SHEET_CREDS": creds,
+            "GOOGLE_SHEET_CREDS": os.environ["GOOGLE_SHEET_CREDS"],
         }
 
     # 其次从 Streamlit secrets 读（Streamlit 会把 JSON 自动解析成 dict，保持原样）
@@ -171,12 +171,7 @@ def build_qa_faiss_index(openai_api_key: str, secrets: dict) -> int:
         if isinstance(creds_raw, dict):
             creds_dict = creds_raw  # Streamlit 已自动解析成 dict
         elif isinstance(creds_raw, str):
-            fixed = re.sub(
-                r'("private_key"\s*:\s*")(.*?)(")',
-                lambda m: m.group(1) + m.group(2).replace('\n', '\\n') + m.group(3),
-                creds_raw, flags=re.DOTALL
-            )
-            creds_dict = json.loads(fixed)
+            creds_dict = json.loads(creds_raw)
         credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         client = gspread.authorize(credentials)
         ws = client.open_by_url(secrets["GOOGLE_SHEET_B_ID"]).worksheet("qa_bank")
