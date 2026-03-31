@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      workflows: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -27,14 +28,18 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Write Google credentials file
-        run: echo '${{ secrets.GOOGLE_SHEET_CREDS }}' > /tmp/gsheet_creds.json
+        run: |
+          echo '${{ secrets.GOOGLE_SHEET_CREDS }}' > /tmp/gsheet_creds.json
+          echo "Creds file written, size: $(wc -c < /tmp/gsheet_creds.json) bytes"
 
       - name: Run scraper
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_SHEET_B_ID: ${{ secrets.GOOGLE_SHEET_B_ID }}
           GOOGLE_SHEET_CREDS_FILE: /tmp/gsheet_creds.json
-        run: python scraper.py
+        run: |
+          echo "GOOGLE_SHEET_CREDS_FILE=$GOOGLE_SHEET_CREDS_FILE"
+          python scraper.py
 
       - name: Commit updated index
         run: |
