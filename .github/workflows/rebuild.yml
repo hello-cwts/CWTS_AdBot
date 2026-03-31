@@ -38,7 +38,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main
           git add faiss_index/ faiss_index_qa/
-          git diff --staged --quiet || git commit -m "chore: rebuild faiss index $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: rebuild faiss index $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git fetch origin main
+          git rebase -X ours origin/main
           git push
