@@ -505,11 +505,17 @@ if query:
     first, *rest = name.split() if name else ("", [])
     last = " ".join(rest)
 
+    # 英文查询先翻译成中文，用于 fuzzy 匹配和向量检索
+    if lang_code == "en":
+        zh_query = translate_to_chinese(query)
+    else:
+        zh_query = None
+
     # --------------------------------------------------
-    # [优化1] 第一步：rapidfuzz 精确匹配，命中直接返回
-    # 跳过所有 embedding + GPT 调用，最快路径
+    # 第一步：rapidfuzz 精确匹配（用中文 query 匹配中文 qa_bank）
+    # 命中直接返回，跳过 embedding + GPT
     # --------------------------------------------------
-    fuzzy_answer = fuzzy_match_qa(query)
+    fuzzy_answer = fuzzy_match_qa(zh_query if zh_query else query)
     if fuzzy_answer:
         st.markdown(t("answer_title"))
         st.success(fuzzy_answer)
@@ -519,15 +525,14 @@ if query:
         # --------------------------------------------------
         # 第二步：向量检索 + GPT 生成
         # --------------------------------------------------
-        if lang_code == "en":
-            zh_query = translate_to_chinese(query)
+        if zh_query:
             hits    = search_faiss(query) + search_faiss(zh_query)
             qa_hits = search_qa_bank(query) + search_qa_bank(zh_query)
         else:
             hits    = search_faiss(query)
             qa_hits = search_qa_bank(query)
 
-        # qa_bank 结果优先放前面（staff 维护的答案更可靠）
+        # qa_bank 结果优先放前面
         combined = qa_hits + hits
 
         # 去重
