@@ -173,6 +173,11 @@ def async_rebuild():
 # 精确匹配缓存（rapidfuzz）
 # =========================
 def _normalize(text: str) -> str:
+    try:
+        from opencc import OpenCC
+        text = OpenCC('t2s').convert(text)  # 繁体转简体，统一字体再比对
+    except Exception:
+        pass
     text = text.lower().strip()
     text = re.sub(r'[^\w\s]', '', text)
     text = re.sub(r'\s+', ' ', text)
