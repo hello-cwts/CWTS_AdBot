@@ -51,14 +51,12 @@ def load_secrets() -> dict:
     """
     import os
 
-    # GitHub Actions：creds 写入临时文件，直接读文件内容
-    if os.environ.get("GOOGLE_SHEET_CREDS_FILE"):
-        with open(os.environ["GOOGLE_SHEET_CREDS_FILE"], "r") as f:
-            creds = f.read()
+    # GitHub Actions：直接读 GOOGLE_SHEET_CREDS 环境变量（合法 JSON 字符串）
+    if os.environ.get("GOOGLE_SHEET_CREDS"):
         return {
             "OPENAI_API_KEY":     os.environ["OPENAI_API_KEY"],
             "GOOGLE_SHEET_B_ID":  os.environ["GOOGLE_SHEET_B_ID"],
-            "GOOGLE_SHEET_CREDS": creds,
+            "GOOGLE_SHEET_CREDS": os.environ["GOOGLE_SHEET_CREDS"],
         }
 
     # Streamlit Cloud：st.secrets 返回 dict，保持原样
