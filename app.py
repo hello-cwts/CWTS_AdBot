@@ -1,25 +1,10 @@
 """
 app.py
 CWTS 招生FAQ Chatbot v2
-
-改动说明：
-[优化1] fuzzy_match_qa（第~140行）
-  - 在任何 API 调用前先做 rapidfuzz 模糊匹配（阈值85）
-  - 命中直接返回 qa_bank 答案，跳过 embedding + GPT，节省成本和时间
-
-[优化2] k 值缩减（第~115、~128行）
-  - 网站 FAISS k: 5 → 3
-  - qa_bank FAISS k: 3 → 2
-  - GPT context chunks: 4 → 3
-  - 减少 embedding 查询量和 GPT token 消耗
-
-[优化3] GPT Prompt 优化（第~360行）
-  - 明确说明 context 可能是中文，英文问题也要理解中文 context
-  - 降低 UNANSWERABLE 门槛：有部分相关信息就尝试回答
-  - 地点/联系方式/基本信息类问题：即使不完整也给出部分回答
 """
 
 import time
+import threading
 import streamlit as st
 import re
 from datetime import datetime, timezone
@@ -127,7 +112,6 @@ def t(key: str) -> str:
 
 # =========================
 # FAISS 检索器
-# [优化2] k 值：网站 5→3，qa_bank 3→2
 # =========================
 @st.cache_resource(ttl=3600)
 def load_faiss_retriever():
@@ -186,11 +170,9 @@ def async_rebuild():
 
 
 # =========================
-# [优化1] 精确匹配缓存
-# 用 rapidfuzz 在 embedding/GPT 之前先做字符串匹配
+# 精确匹配缓存（rapidfuzz）
 # =========================
 def _normalize(text: str) -> str:
-    """标准化：转小写、去标点、合并空格"""
     text = text.lower().strip()
     text = re.sub(r'[^\w\s]', '', text)
     text = re.sub(r'\s+', ' ', text)
@@ -199,7 +181,6 @@ def _normalize(text: str) -> str:
 
 @st.cache_data(ttl=300)
 def _load_qa_pairs() -> list[dict]:
-    """从 Google Sheet 加载 qa_bank，5分钟缓存，staff 更新后快速生效"""
     df = load_qa_bank()
     pairs = []
     for _, row in df.iterrows():
@@ -211,11 +192,6 @@ def _load_qa_pairs() -> list[dict]:
 
 
 def fuzzy_match_qa(query: str) -> str | None:
-    """
-    对 query 做 rapidfuzz 模糊匹配（阈值 85）。
-    命中返回对应 answer，未命中返回 None。
-    跳过所有 embedding 和 GPT 调用。
-    """
     try:
         from rapidfuzz import process, fuzz
         pairs = _load_qa_pairs()
@@ -274,7 +250,7 @@ if not st.session_state.verse_displayed:
 
 
 # =========================
-# 注册表单（必须通过才能提问）
+# 注册表单
 # =========================
 PROGRAM_OPTIONS = {
     "zh": [
@@ -394,7 +370,7 @@ def search_qa_bank(query: str) -> list[dict]:
 
 
 # =========================
-# 英文查询翻译为中文（用于检索）
+# 英文查询翻译为中文
 # =========================
 def translate_to_chinese(query: str) -> str:
     import openai
@@ -412,14 +388,11 @@ def translate_to_chinese(query: str) -> str:
 
 # =========================
 # GPT 生成答案
-# [优化2] context chunks: 4 → 3
-# [优化3] prompt 优化：降低 UNANSWERABLE 门槛，支持部分回答
 # =========================
 UNANSWERABLE_MARKER = "UNANSWERABLE"
 
 def generate_answer(query: str, context_chunks: list[dict]) -> str:
     import openai
-    # [优化2] 从 4 条改为 3 条，减少 token 消耗
     context = "\n\n".join([c["text"] for c in context_chunks[:3]])
     lang_name = {"zh": "Simplified Chinese", "zh-TW": "Traditional Chinese", "en": "English"}[lang_code]
 
@@ -435,20 +408,20 @@ You can answer questions about:
 
 Always respond in {lang_name}, regardless of the language of the context provided.
 The context may be in Chinese even when the question is in English — this is expected. Read and understand the Chinese context, then answer in {lang_name}.
-Be warm, concise, and encouraging. When mentioning a faculty member, make it personal and inviting — help the applicant feel connected to the seminary community.
+Be warm, concise, and encouraging.
 
 ANSWERING RULES:
-1. If the context contains relevant information, even partial, use it to give the best possible answer. Do not require a perfect match.
-2. For questions about location, address, contact info, or basic school facts: if the context has any related information, provide it and suggest contacting admissions@cwts.edu for details.
+1. If the context contains relevant information, even partial, use it to give the best possible answer.
+2. For questions about location, address, contact info, or basic school facts: provide what's available and suggest contacting admissions@cwts.edu for details.
 3. Only reply with {UNANSWERABLE_MARKER} if the context has absolutely no relevant information whatsoever.
-4. Do NOT guess, do NOT make up information not present in the context."""
+4. Do NOT guess or make up information not present in the context."""
 
     user_prompt = f"""Question: {query}
 
 Relevant context:
 {context}
 
-Answer in {lang_name}. If the context has any relevant information, use it. Only reply with exactly "{UNANSWERABLE_MARKER}" if the context is completely unrelated."""
+Answer in {lang_name}. Only reply with exactly "{UNANSWERABLE_MARKER}" if the context is completely unrelated."""
 
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     resp = client.chat.completions.create(
@@ -474,6 +447,10 @@ st.markdown(f"""
 
 # 注册门控
 show_signup_form()
+
+# 后台自动重建（每24小时触发一次，不阻塞用户）
+if should_rebuild():
+    threading.Thread(target=async_rebuild, daemon=True).start()
 
 # 搜索框 + 提交按钮
 st.markdown(f"<h4 style='font-weight:400;margin-top:20px;'><strong>{t('search_prompt')}</strong></h4>",
@@ -505,10 +482,7 @@ if query:
     first, *rest = name.split() if name else ("", [])
     last = " ".join(rest)
 
-    # --------------------------------------------------
-    # [优化1] 第一步：rapidfuzz 精确匹配，命中直接返回
-    # 跳过所有 embedding + GPT 调用，最快路径
-    # --------------------------------------------------
+    # 第一步：rapidfuzz 精确匹配，命中直接返回，跳过 embedding + GPT
     fuzzy_answer = fuzzy_match_qa(query)
     if fuzzy_answer:
         st.markdown(t("answer_title"))
@@ -516,9 +490,7 @@ if query:
         append_pending_row(conv_id, lang_code, first, last, email, program, query, fuzzy_answer)
 
     else:
-        # --------------------------------------------------
         # 第二步：向量检索 + GPT 生成
-        # --------------------------------------------------
         if lang_code == "en":
             zh_query = translate_to_chinese(query)
             hits    = search_faiss(query) + search_faiss(zh_query)
@@ -527,10 +499,8 @@ if query:
             hits    = search_faiss(query)
             qa_hits = search_qa_bank(query)
 
-        # qa_bank 结果优先放前面（staff 维护的答案更可靠）
         combined = qa_hits + hits
 
-        # 去重
         seen = set()
         hits = []
         for h in combined:
