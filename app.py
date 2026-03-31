@@ -396,7 +396,8 @@ def translate_to_chinese(query: str) -> str:
 # =========================
 UNANSWERABLE_MARKER = "UNANSWERABLE"
 
-def generate_answer(query: str, context_chunks: list[dict]) -> str:
+def stream_answer(query: str, context_chunks: list[dict]):
+    """流式生成答案，yield 文字片段。"""
     import openai
     context = "\n\n".join([c["text"] for c in context_chunks[:3]])
     lang_name = {"zh": "Simplified Chinese", "zh-TW": "Traditional Chinese", "en": "English"}[lang_code]
@@ -429,15 +430,19 @@ Relevant context:
 Answer in {lang_name}. Only reply with exactly "{UNANSWERABLE_MARKER}" if the context is completely unrelated."""
 
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-    resp = client.chat.completions.create(
+    stream = client.chat.completions.create(
         model=GPT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_prompt},
         ],
         temperature=GPT_TEMPERATURE,
+        stream=True,
     )
-    return resp.choices[0].message.content.strip()
+    for chunk in stream:
+        content = chunk.choices[0].delta.content
+        if content:
+            yield content
 
 
 # =========================
@@ -516,10 +521,14 @@ if query:
 
         if hits:
             st.markdown(t("answer_title"))
-            with st.spinner(t("thinking")):
-                answer = generate_answer(query, hits)
+            placeholder = st.empty()
+            answer = ""
+            for chunk in stream_answer(query, hits):
+                answer += chunk
+                placeholder.markdown(answer + "▌")
+            placeholder.empty()
 
-            if answer == UNANSWERABLE_MARKER:
+            if answer.strip() == UNANSWERABLE_MARKER:
                 st.info(t("no_result"))
                 append_unanswered_row(
                     conv_id, lang_code, first, last,
