@@ -3,7 +3,7 @@ scraper.py
 每天自动抓取 CWTS 招生相关页面，重建 FAISS 向量库。
 运行方式：
   - 手动：python scraper.py
-  - 自动：用 Windows Task Scheduler 每天定时运行
+  - 自动：GitHub Actions 每天定时运行
 """
 
 import re
@@ -31,7 +31,7 @@ from config import (
 # 工具函数
 # =========================
 def fix_creds_json(raw: str) -> str:
-    """修复 private_key 里的真实换行符，使 json.loads 能正常解析"""
+    """修复 private_key 里的真实换行符，使 json.loads 能正常解析（用于本地 toml 路径）"""
     return re.sub(
         r'("private_key"\s*:\s*")(.*?)(")',
         lambda m: m.group(1) + m.group(2).replace('\n', '\\n') + m.group(3),
@@ -40,23 +40,28 @@ def fix_creds_json(raw: str) -> str:
 
 
 # =========================
-# secrets 读取（兼容命令行和 Streamlit）
+# secrets 读取（兼容三种环境）
 # =========================
 def load_secrets() -> dict:
-    """读取 secrets，兼容 Streamlit、命令行、GitHub Actions 三种环境"""
+    """
+    三种环境的读取逻辑：
+    1. GitHub Actions：从文件读取 creds（GOOGLE_SHEET_CREDS_FILE 环境变量指定路径）
+    2. Streamlit Cloud：st.secrets 自动解析成 dict
+    3. 本地命令行：从 .streamlit/secrets.toml 读取，用 fix_creds_json 修复换行符
+    """
     import os
 
-    # 优先从环境变量读（GitHub Actions）
-    if os.environ.get("OPENAI_API_KEY"):
-        creds = os.environ["GOOGLE_SHEET_CREDS"].replace("\\n", "\n")
-        creds = fix_creds_json(creds)  # 保险处理
+    # GitHub Actions：creds 写入临时文件，直接读文件内容
+    if os.environ.get("GOOGLE_SHEET_CREDS_FILE"):
+        with open(os.environ["GOOGLE_SHEET_CREDS_FILE"], "r") as f:
+            creds = f.read()
         return {
             "OPENAI_API_KEY":     os.environ["OPENAI_API_KEY"],
             "GOOGLE_SHEET_B_ID":  os.environ["GOOGLE_SHEET_B_ID"],
             "GOOGLE_SHEET_CREDS": creds,
         }
 
-    # 其次从 Streamlit secrets 读（Streamlit 会把 JSON 自动解析成 dict，保持原样）
+    # Streamlit Cloud：st.secrets 返回 dict，保持原样
     try:
         import streamlit as st
         return {
@@ -67,7 +72,7 @@ def load_secrets() -> dict:
     except Exception:
         pass
 
-    # 最后从本地 secrets.toml 读（本地命令行）
+    # 本地命令行：从 secrets.toml 读取，修复换行符
     with open(".streamlit/secrets.toml", "rb") as f:
         s = tomllib.load(f)
     return {
@@ -88,29 +93,22 @@ def is_allowed_url(url: str) -> bool:
     return any(kw in path for kw in ALLOWED_PATH_KEYWORDS)
 
 
-def fetch_page(url: str) -> tuple[str | None, list[str]]:
-    """返回 (正文文本, 页内链接列表)，失败时返回 (None, [])"""
+def fetch_page(url: str) -> str | None:
     try:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; CWTSBot/1.0)"}
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
-
-        links = [
-            urljoin(url, a["href"]).split("#")[0].split("?")[0]
-            for a in soup.find_all("a", href=True)
-        ]
-
         for tag in soup(["nav", "footer", "script", "style", "header", "aside"]):
             tag.decompose()
         main = soup.find("main") or soup.find("article") or soup.find("body")
         if not main:
-            return None, links
+            return None
         text = main.get_text(separator="\n", strip=True)
-        return (text if len(text) >= 200 else None), links
+        return text if len(text) >= 200 else None
     except Exception as e:
         print(f"  [跳过] {url} — {e}")
-        return None, []
+        return None
 
 
 def crawl(seed_urls: list[str], max_pages: int = MAX_PAGES) -> list[Document]:
@@ -127,13 +125,20 @@ def crawl(seed_urls: list[str], max_pages: int = MAX_PAGES) -> list[Document]:
         visited.add(url)
 
         print(f"  抓取 ({len(visited)}/{max_pages}): {url}")
-        text, links = fetch_page(url)
+        text = fetch_page(url)
 
         if text:
             documents.append(Document(page_content=text, metadata={"source": url}))
-            for full_url in links:
-                if full_url not in visited and is_allowed_url(full_url):
-                    queue.append(full_url)
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 (compatible; CWTSBot/1.0)"}
+                resp = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for a in soup.find_all("a", href=True):
+                    full_url = urljoin(url, a["href"]).split("#")[0].split("?")[0]
+                    if full_url not in visited and is_allowed_url(full_url):
+                        queue.append(full_url)
+            except Exception:
+                pass
 
         time.sleep(REQUEST_DELAY)
 
@@ -169,14 +174,9 @@ def build_qa_faiss_index(openai_api_key: str, secrets: dict) -> int:
         ]
         creds_raw = secrets["GOOGLE_SHEET_CREDS"]
         if isinstance(creds_raw, dict):
-            creds_dict = creds_raw  # Streamlit 已自动解析成 dict
-        elif isinstance(creds_raw, str):
-            fixed = re.sub(
-                r'("private_key"\s*:\s*")(.*?)(")',
-                lambda m: m.group(1) + m.group(2).replace('\n', '\\n') + m.group(3),
-                creds_raw, flags=re.DOTALL
-            )
-            creds_dict = json.loads(fixed)
+            creds_dict = creds_raw          # Streamlit 已自动解析成 dict
+        else:
+            creds_dict = json.loads(creds_raw)  # 文件内容或已处理的字符串，直接解析
         credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         client = gspread.authorize(credentials)
         ws = client.open_by_url(secrets["GOOGLE_SHEET_B_ID"]).worksheet("qa_bank")

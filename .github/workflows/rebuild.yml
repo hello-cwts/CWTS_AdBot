@@ -13,9 +13,6 @@ jobs:
       contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      GOOGLE_SHEET_B_ID: ${{ secrets.GOOGLE_SHEET_B_ID }}
-      GOOGLE_SHEET_CREDS: ${{ secrets.GOOGLE_SHEET_CREDS }}
 
     steps:
       - name: Checkout code
@@ -29,7 +26,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Write Google credentials file
+        run: echo '${{ secrets.GOOGLE_SHEET_CREDS }}' > /tmp/gsheet_creds.json
+
       - name: Run scraper
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_SHEET_B_ID: ${{ secrets.GOOGLE_SHEET_B_ID }}
+          GOOGLE_SHEET_CREDS_FILE: /tmp/gsheet_creds.json
         run: python scraper.py
 
       - name: Commit updated index
