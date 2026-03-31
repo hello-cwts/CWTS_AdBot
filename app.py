@@ -202,7 +202,7 @@ def fuzzy_match_qa(query: str) -> str | None:
         result = process.extractOne(
             normalized_query, list(choices.keys()), scorer=fuzz.WRatio
         )
-        if result and result[1] >= 85:
+        if result and result[1] >= 75:
             return choices[result[0]]
     except Exception:
         pass
