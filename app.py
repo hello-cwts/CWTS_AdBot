@@ -4,7 +4,7 @@ CWTS 招生FAQ Chatbot v2
 
 改动说明：
 [优化1] fuzzy_match_qa（第~140行）
-  - 在任何 API 调用前先做 rapidfuzz 模糊匹配（阈值75）
+  - 在任何 API 调用前先做 rapidfuzz 模糊匹配（阈值85）
   - 命中直接返回 qa_bank 答案，跳过 embedding + GPT，节省成本和时间
 
 [优化2] k 值缩减（第~115、~128行）
@@ -212,7 +212,7 @@ def _load_qa_pairs() -> list[dict]:
 
 def fuzzy_match_qa(query: str) -> str | None:
     """
-    对 query 做 rapidfuzz 模糊匹配（阈值 75）。
+    对 query 做 rapidfuzz 模糊匹配（阈值 85）。
     命中返回对应 answer，未命中返回 None。
     跳过所有 embedding 和 GPT 调用。
     """
@@ -226,7 +226,7 @@ def fuzzy_match_qa(query: str) -> str | None:
         result = process.extractOne(
             normalized_query, list(choices.keys()), scorer=fuzz.WRatio
         )
-        if result and result[1] >= 75:
+        if result and result[1] >= 85:
             return choices[result[0]]
     except Exception:
         pass
@@ -497,14 +497,6 @@ if not submitted:
 # 检索 + 回答
 # =========================
 if query:
-    st.write(f"DEBUG lang_code={lang_code}")  # ← 加这行
-    
-    if lang_code == "en":
-        zh_test = translate_to_chinese(query)
-        st.write(f"DEBUG 翻译结果: {zh_test}")
-        fuzzy_test = fuzzy_match_qa(zh_test)
-        st.write(f"DEBUG fuzzy命中: {fuzzy_test}")
-        
     conv_id  = get_or_create_conversation_id()
     name     = st.session_state.get("user_name", "")
     email    = st.session_state.get("user_email", "")
@@ -513,17 +505,11 @@ if query:
     first, *rest = name.split() if name else ("", [])
     last = " ".join(rest)
 
-    # 英文查询先翻译成中文，用于 fuzzy 匹配和向量检索
-    if lang_code == "en":
-        zh_query = translate_to_chinese(query)
-    else:
-        zh_query = None
-
     # --------------------------------------------------
-    # 第一步：rapidfuzz 精确匹配（用中文 query 匹配中文 qa_bank）
-    # 命中直接返回，跳过 embedding + GPT
+    # [优化1] 第一步：rapidfuzz 精确匹配，命中直接返回
+    # 跳过所有 embedding + GPT 调用，最快路径
     # --------------------------------------------------
-    fuzzy_answer = fuzzy_match_qa(zh_query if zh_query else query)
+    fuzzy_answer = fuzzy_match_qa(query)
     if fuzzy_answer:
         st.markdown(t("answer_title"))
         st.success(fuzzy_answer)
@@ -533,14 +519,15 @@ if query:
         # --------------------------------------------------
         # 第二步：向量检索 + GPT 生成
         # --------------------------------------------------
-        if zh_query:
+        if lang_code == "en":
+            zh_query = translate_to_chinese(query)
             hits    = search_faiss(query) + search_faiss(zh_query)
             qa_hits = search_qa_bank(query) + search_qa_bank(zh_query)
         else:
             hits    = search_faiss(query)
             qa_hits = search_qa_bank(query)
 
-        # qa_bank 结果优先放前面
+        # qa_bank 结果优先放前面（staff 维护的答案更可靠）
         combined = qa_hits + hits
 
         # 去重
