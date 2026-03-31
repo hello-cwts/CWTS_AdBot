@@ -11,36 +11,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_SHEET_B_ID: ${{ secrets.GOOGLE_SHEET_B_ID }}
+      GOOGLE_SHEET_CREDS: ${{ secrets.GOOGLE_SHEET_CREDS }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 完整克隆，避免 git pull --rebase 找不到公共祖先
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'  # 缓存 pip 依赖，加快构建速度
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Run scraper
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_SHEET_B_ID: ${{ secrets.GOOGLE_SHEET_B_ID }}
-          GOOGLE_SHEET_CREDS: ${{ secrets.GOOGLE_SHEET_CREDS }}
         run: python scraper.py
 
       - name: Commit updated index
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add faiss_index/ faiss_index_qa/
-          git diff --staged --quiet && echo "No changes" && exit 0
-          git commit -m "chore: rebuild faiss index $(date -u '+%Y-%m-%d %H:%M UTC')"
           git fetch origin main
-          git rebase -X ours origin/main
-          git push
+          git reset --soft origin/main
+          git add faiss_index/ faiss_index_qa/
+          git diff --staged --quiet || git commit -m "chore: rebuild faiss index $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push origin main
