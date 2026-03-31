@@ -4,7 +4,7 @@ CWTS 招生FAQ Chatbot v2
 
 改动说明：
 [优化1] fuzzy_match_qa（第~140行）
-  - 在任何 API 调用前先做 rapidfuzz 模糊匹配（阈值85）
+  - 在任何 API 调用前先做 rapidfuzz 模糊匹配（阈值75）
   - 命中直接返回 qa_bank 答案，跳过 embedding + GPT，节省成本和时间
 
 [优化2] k 值缩减（第~115、~128行）
@@ -212,7 +212,7 @@ def _load_qa_pairs() -> list[dict]:
 
 def fuzzy_match_qa(query: str) -> str | None:
     """
-    对 query 做 rapidfuzz 模糊匹配（阈值 85）。
+    对 query 做 rapidfuzz 模糊匹配（阈值 75）。
     命中返回对应 answer，未命中返回 None。
     跳过所有 embedding 和 GPT 调用。
     """
@@ -226,7 +226,7 @@ def fuzzy_match_qa(query: str) -> str | None:
         result = process.extractOne(
             normalized_query, list(choices.keys()), scorer=fuzz.WRatio
         )
-        if result and result[1] >= 85:
+        if result and result[1] >= 75:
             return choices[result[0]]
     except Exception:
         pass
