@@ -129,6 +129,7 @@ def load_faiss_retriever():
 
 @st.cache_resource(ttl=3600)
 def load_qa_faiss_retriever():
+    """磁盘上的 qa_bank 向量库，仅在读取 Sheet 失败时作为后备"""
     from langchain_community.vectorstores import FAISS
     from langchain_openai import OpenAIEmbeddings
     embeddings = OpenAIEmbeddings(
@@ -139,6 +140,32 @@ def load_qa_faiss_retriever():
         "faiss_index_qa", embeddings,
         allow_dangerous_deserialization=True,
     ).as_retriever(search_kwargs={"k": 2})
+
+
+@st.cache_resource(max_entries=1)
+def _build_qa_retriever(pairs: tuple[tuple[str, str], ...]):
+    """按 qa_bank 当前内容在内存中建向量库；内容一变（缓存 key 变）就重建，旧的自动淘汰"""
+    from langchain_community.vectorstores import FAISS
+    from langchain_core.documents import Document
+    from langchain_openai import OpenAIEmbeddings
+    embeddings = OpenAIEmbeddings(
+        openai_api_key=st.secrets["OPENAI_API_KEY"],
+        model=EMBEDDING_MODEL,
+    )
+    docs = [Document(page_content=f"Q: {q}\nA: {a}", metadata={"source": "qa_bank"})
+            for q, a in pairs]
+    return FAISS.from_documents(docs, embeddings).as_retriever(search_kwargs={"k": 2})
+
+
+def load_qa_retriever():
+    """staff 改了 qa_bank 后，语义检索也在 5 分钟内（_load_qa_pairs 的缓存周期）生效"""
+    pairs = tuple((p["question"], p["answer"]) for p in _load_qa_pairs())
+    if pairs:
+        try:
+            return _build_qa_retriever(pairs)
+        except Exception as e:
+            print(f"[qa_bank 向量库构建失败，改用磁盘版本] {e}")
+    return load_qa_faiss_retriever()
 
 
 # =========================
@@ -408,7 +435,7 @@ def search_faiss(query: str) -> list[dict]:
 
 def search_qa_bank(query: str) -> list[dict]:
     try:
-        retriever = load_qa_faiss_retriever()
+        retriever = load_qa_retriever()
         docs = retriever.invoke(query)
         return [{"text": d.page_content, "source": "qa_bank"} for d in docs]
     except Exception:
