@@ -114,7 +114,8 @@ def get_sheet_b():
 def load_qa_bank() -> pd.DataFrame:
     """
     读取 qa_bank tab，返回 DataFrame。
-    每小时缓存一次，staff更新后最多1小时生效。
+    缓存 5 分钟，staff 更新后最多 5 分钟对精确匹配生效
+    （语义检索用的 faiss_index_qa 要等下次 24 小时重建）。
     """
     try:
         sh = get_sheet_b()

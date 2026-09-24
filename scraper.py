@@ -3,7 +3,7 @@ scraper.py
 每天自动抓取 CWTS 招生相关页面，重建 FAISS 向量库。
 运行方式：
   - 手动：python scraper.py
-  - 自动：GitHub Actions 每天定时运行
+  - 自动：app.py 后台线程每 24 小时触发一次
 """
 
 import re
@@ -44,21 +44,10 @@ def fix_creds_json(raw: str) -> str:
 # =========================
 def load_secrets() -> dict:
     """
-    三种环境的读取逻辑：
-    1. GitHub Actions：从文件读取 creds（GOOGLE_SHEET_CREDS_FILE 环境变量指定路径）
-    2. Streamlit Cloud：st.secrets 自动解析成 dict
-    3. 本地命令行：从 .streamlit/secrets.toml 读取，用 fix_creds_json 修复换行符
+    两种环境的读取逻辑：
+    1. Streamlit Cloud / streamlit run：st.secrets
+    2. 本地命令行：从 .streamlit/secrets.toml 读取，用 fix_creds_json 修复换行符
     """
-    import os
-
-    # GitHub Actions：直接读 GOOGLE_SHEET_CREDS 环境变量（合法 JSON 字符串）
-    if os.environ.get("GOOGLE_SHEET_CREDS"):
-        return {
-            "OPENAI_API_KEY":     os.environ["OPENAI_API_KEY"],
-            "GOOGLE_SHEET_B_ID":  os.environ["GOOGLE_SHEET_B_ID"],
-            "GOOGLE_SHEET_CREDS": os.environ["GOOGLE_SHEET_CREDS"],
-        }
-
     # Streamlit Cloud：st.secrets 返回 dict，保持原样
     try:
         import streamlit as st
@@ -91,22 +80,26 @@ def is_allowed_url(url: str) -> bool:
     return any(kw in path for kw in ALLOWED_PATH_KEYWORDS)
 
 
-def fetch_page(url: str) -> str | None:
+def fetch_page(url: str) -> tuple[str | None, list[str]]:
+    """请求一次页面，返回 (正文, 页面内链接)。正文太短返回 None。"""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; CWTSBot/1.0)"}
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
+        # 先收集链接（nav/footer 里的链接也要跟踪），再删掉这些区块取正文
+        links = [urljoin(url, a["href"]).split("#")[0].split("?")[0]
+                 for a in soup.find_all("a", href=True)]
         for tag in soup(["nav", "footer", "script", "style", "header", "aside"]):
             tag.decompose()
         main = soup.find("main") or soup.find("article") or soup.find("body")
         if not main:
-            return None
+            return None, []
         text = main.get_text(separator="\n", strip=True)
-        return text if len(text) >= 200 else None
+        return (text if len(text) >= 200 else None), links
     except Exception as e:
         print(f"  [跳过] {url} — {e}")
-        return None
+        return None, []
 
 
 def crawl(seed_urls: list[str], max_pages: int = MAX_PAGES) -> list[Document]:
@@ -123,20 +116,13 @@ def crawl(seed_urls: list[str], max_pages: int = MAX_PAGES) -> list[Document]:
         visited.add(url)
 
         print(f"  抓取 ({len(visited)}/{max_pages}): {url}")
-        text = fetch_page(url)
+        text, links = fetch_page(url)
 
         if text:
             documents.append(Document(page_content=text, metadata={"source": url}))
-            try:
-                headers = {"User-Agent": "Mozilla/5.0 (compatible; CWTSBot/1.0)"}
-                resp = requests.get(url, headers=headers, timeout=15)
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for a in soup.find_all("a", href=True):
-                    full_url = urljoin(url, a["href"]).split("#")[0].split("?")[0]
-                    if full_url not in visited and is_allowed_url(full_url):
-                        queue.append(full_url)
-            except Exception:
-                pass
+            for full_url in links:
+                if full_url not in visited and is_allowed_url(full_url):
+                    queue.append(full_url)
 
         time.sleep(REQUEST_DELAY)
 

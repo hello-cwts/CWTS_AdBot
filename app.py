@@ -145,39 +145,75 @@ def load_qa_faiss_retriever():
 # 重建向量库（后台）
 # =========================
 REBUILD_INTERVAL_HOURS = 24
+REBUILD_RETRY_HOURS = 1     # 重建失败后，至少间隔多久再重试
 LAST_REBUILD_FILE = "last_rebuild.txt"
 
+
+@st.cache_resource
+def _rebuild_state() -> dict:
+    """跨 session / rerun 共享的重建状态（脚本每次 rerun 都会重置普通全局变量）"""
+    return {"lock": threading.Lock(), "last_attempt": 0.0}
+
+
 def should_rebuild() -> bool:
+    now = datetime.now(timezone.utc).timestamp()
+    if (now - _rebuild_state()["last_attempt"]) / 3600 < REBUILD_RETRY_HOURS:
+        return False
     try:
         last = float(Path(LAST_REBUILD_FILE).read_text().strip())
-        elapsed = (datetime.now(timezone.utc).timestamp() - last) / 3600
-        return elapsed >= REBUILD_INTERVAL_HOURS
+        return (now - last) / 3600 >= REBUILD_INTERVAL_HOURS
     except Exception:
         return True
 
 def mark_rebuilt():
     Path(LAST_REBUILD_FILE).write_text(str(datetime.now(timezone.utc).timestamp()))
 
-def async_rebuild():
+def async_rebuild(state: dict):
     try:
         from scraper import rebuild_index
-        rebuild_index(st.secrets["OPENAI_API_KEY"])
-        mark_rebuilt()
-        load_faiss_retriever.clear()
-        load_qa_faiss_retriever.clear()
+        if rebuild_index(st.secrets["OPENAI_API_KEY"]):
+            mark_rebuilt()
+            load_faiss_retriever.clear()
+            load_qa_faiss_retriever.clear()
     except Exception as e:
         print(f"[后台重建失败] {e}")
+    finally:
+        state["lock"].release()
+
+def trigger_rebuild_if_needed():
+    """同一时间只允许一个重建线程"""
+    if not should_rebuild():
+        return
+    state = _rebuild_state()
+    if not state["lock"].acquire(blocking=False):
+        return  # 已有线程在重建
+    state["last_attempt"] = datetime.now(timezone.utc).timestamp()
+    threading.Thread(target=async_rebuild, args=(state,), daemon=True).start()
 
 
 # =========================
 # 精确匹配缓存（rapidfuzz）
 # =========================
-def _normalize(text: str) -> str:
+FUZZY_THRESHOLD = 75
+FUZZY_MIN_LEN_RATIO = 0.6   # 长度差太多的不算匹配（防止"宿舍"命中"宿舍可以养宠物吗"）
+
+
+@st.cache_resource
+def _opencc(config: str):
     try:
         from opencc import OpenCC
-        text = OpenCC('t2s').convert(text)  # 繁体转简体，统一字体再比对
+        return OpenCC(config)
     except Exception:
-        pass
+        return None
+
+
+def _convert(text: str, config: str) -> str:
+    cc = _opencc(config)
+    return cc.convert(text) if cc else text
+
+
+def _normalize(text: str) -> str:
+    text = _convert(text, 't2s')  # 繁体转简体，统一字体再比对
     text = text.lower().strip()
     text = re.sub(r'[^\w\s]', '', text)
     text = re.sub(r'\s+', ' ', text)
@@ -203,12 +239,17 @@ def fuzzy_match_qa(query: str) -> str | None:
         if not pairs:
             return None
         normalized_query = _normalize(query)
+        if not normalized_query:
+            return None
         choices = {p["normalized"]: p["answer"] for p in pairs}
-        result = process.extractOne(
-            normalized_query, list(choices.keys()), scorer=fuzz.WRatio
+        results = process.extract(
+            normalized_query, list(choices.keys()), scorer=fuzz.WRatio,
+            score_cutoff=FUZZY_THRESHOLD, limit=5,
         )
-        if result and result[1] >= 75:
-            return choices[result[0]]
+        for cand, _, _ in results:
+            short, long_ = sorted((len(normalized_query), len(cand)))
+            if long_ and short / long_ >= FUZZY_MIN_LEN_RATIO:
+                return choices[cand]
     except Exception:
         pass
     return None
@@ -377,29 +418,59 @@ def search_qa_bank(query: str) -> list[dict]:
 # =========================
 # 英文查询翻译为中文
 # =========================
-def translate_to_chinese(query: str) -> str:
+def _translate(text: str, instruction: str) -> str:
     import openai
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Translate the following question into Traditional Chinese. Output only the translation, nothing else."},
-            {"role": "user", "content": query},
+            {"role": "system", "content": instruction},
+            {"role": "user", "content": text},
         ],
         temperature=0,
     )
     return resp.choices[0].message.content.strip()
 
 
+def translate_to_chinese(query: str) -> str:
+    try:
+        return _translate(query, "Translate the following question into Traditional Chinese. Output only the translation, nothing else.")
+    except Exception:
+        return query
+
+
+def localize_answer(answer: str) -> str:
+    """qa_bank 的答案按用户所选语言输出：简繁用 OpenCC，英文用 GPT 翻译"""
+    if lang_code == "zh":
+        return _convert(answer, 't2s')
+    if lang_code == "zh-TW":
+        return _convert(answer, 's2t')
+    try:
+        return _translate(answer, "Translate the following text into English. Keep names, emails and URLs unchanged. Output only the translation, nothing else.")
+    except Exception:
+        return answer
+
+
 # =========================
 # GPT 生成答案
 # =========================
 UNANSWERABLE_MARKER = "UNANSWERABLE"
+MAX_CONTEXT_CHUNKS = 6
+
+def is_unanswerable(answer: str) -> bool:
+    """容忍模型输出 "UNANSWERABLE." / "**UNANSWERABLE**" 之类的变体"""
+    return re.sub(r'[^A-Za-z]', '', answer).upper() == UNANSWERABLE_MARKER
+
+def _may_be_unanswerable(partial: str) -> bool:
+    """流式输出时：当前内容是否仍可能是 UNANSWERABLE 标记的开头"""
+    if not re.fullmatch(r'[\s*`"\'.]*[A-Za-z]*[\s*`"\'.]*', partial):
+        return False
+    return UNANSWERABLE_MARKER.startswith(re.sub(r'[^A-Za-z]', '', partial).upper())
 
 def stream_answer(query: str, context_chunks: list[dict]):
     """流式生成答案，yield 文字片段。"""
     import openai
-    context = "\n\n".join([c["text"] for c in context_chunks[:3]])
+    context = "\n\n".join([c["text"] for c in context_chunks])
     lang_name = {"zh": "Simplified Chinese", "zh-TW": "Traditional Chinese", "en": "English"}[lang_code]
 
     system_prompt = f"""You are an admissions FAQ assistant for Christian Witness Theological Seminary (CWTS).
@@ -459,8 +530,7 @@ st.markdown(f"""
 show_signup_form()
 
 # 后台自动重建（每24小时触发一次，不阻塞用户）
-if should_rebuild():
-    threading.Thread(target=async_rebuild, daemon=True).start()
+trigger_rebuild_if_needed()
 
 # 搜索框 + 提交按钮
 st.markdown(f"<h4 style='font-weight:400;margin-top:20px;'><strong>{t('search_prompt')}</strong></h4>",
@@ -489,20 +559,22 @@ if query:
     email    = st.session_state.get("user_email", "")
     phone    = st.session_state.get("user_phone", "")
     program  = st.session_state.get("user_program", "")
-    first, *rest = name.split() if name else ("", [])
-    last = " ".join(rest)
+    first, _, last = name.partition(" ")
+
+    # 英文查询先翻译成中文，用于 fuzzy 匹配和向量检索（qa_bank 与官网内容都是中文）
+    zh_query = translate_to_chinese(query) if lang_code == "en" else None
 
     # 第一步：rapidfuzz 精确匹配，命中直接返回，跳过 embedding + GPT
-    fuzzy_answer = fuzzy_match_qa(query)
+    fuzzy_answer = fuzzy_match_qa(zh_query or query)
     if fuzzy_answer:
+        fuzzy_answer = localize_answer(fuzzy_answer)
         st.markdown(t("answer_title"))
         st.success(fuzzy_answer)
         append_pending_row(conv_id, lang_code, first, last, email, program, query, fuzzy_answer)
 
     else:
         # 第二步：向量检索 + GPT 生成
-        if lang_code == "en":
-            zh_query = translate_to_chinese(query)
+        if zh_query:
             hits    = search_faiss(query) + search_faiss(zh_query)
             qa_hits = search_qa_bank(query) + search_qa_bank(zh_query)
         else:
@@ -518,6 +590,8 @@ if query:
             if key not in seen:
                 hits.append(h)
                 seen.add(key)
+        # 送进 GPT 的段落和"参考来源"里展示的保持一致
+        hits = hits[:MAX_CONTEXT_CHUNKS]
 
         if hits:
             st.markdown(t("answer_title"))
@@ -525,10 +599,12 @@ if query:
             answer = ""
             for chunk in stream_answer(query, hits):
                 answer += chunk
-                placeholder.markdown(answer + "▌")
+                # 可能是 UNANSWERABLE 的开头时先不显示，避免把标记打到屏幕上
+                if not _may_be_unanswerable(answer):
+                    placeholder.markdown(answer + "▌")
             placeholder.empty()
 
-            if answer.strip() == UNANSWERABLE_MARKER:
+            if is_unanswerable(answer):
                 st.info(t("no_result"))
                 append_unanswered_row(
                     conv_id, lang_code, first, last,
