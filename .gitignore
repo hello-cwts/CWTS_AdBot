@@ -7,6 +7,9 @@ __pycache__/
 *.py[cod]
 venv/
 
+# 内部文档（不上传）
+doc/
+
 # 临时文件
 last_rebuild.txt
 test.py
