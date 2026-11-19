@@ -91,9 +91,16 @@ def fix_creds_json(raw: str) -> str:
     )
 
 
+ALLOWED_DOMAIN = "cwts.edu"
+
+
 def is_allowed_url(url: str) -> bool:
     parsed = urlparse(url)
-    if "cwts.edu" not in parsed.netloc:
+    if parsed.scheme not in ("http", "https"):
+        return False
+    # hostname 已去掉端口和 user@，且为小写；必须是 cwts.edu 本身或其子域名
+    host = parsed.hostname or ""
+    if host != ALLOWED_DOMAIN and not host.endswith("." + ALLOWED_DOMAIN):
         return False
     path = parsed.path.lower()
     return any(kw in path for kw in ALLOWED_PATH_KEYWORDS)

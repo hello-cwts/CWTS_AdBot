@@ -99,6 +99,7 @@ def test_may_be_unanswerable_rejects_real_text(partial):
     "https://www.cwts.edu/zh/admissions/application-procedure/",
     "https://www.cwts.edu/zh/academic/faculty/",
     "https://cwts.edu/ZH/About/history/",
+    "https://WWW.CWTS.EDU:443/zh/admissions/",  # 大写 + 端口
 ])
 def test_allowed_urls(url):
     assert is_allowed_url(url)
@@ -108,6 +109,11 @@ def test_allowed_urls(url):
     "https://www.cwts.edu/en/admissions/",      # 非中文路径
     "https://www.cwts.edu/zh/news/",            # 不在白名单
     "https://www.google.com/zh/admissions/",    # 外站
+    "https://cwts.edu.evil.com/zh/admissions/", # 假冒子串
+    "https://evilcwts.edu/zh/admissions/",      # 后缀相似
+    "https://cwts.edu@evil.com/zh/admissions/", # user@ 伪装，实际访问 evil.com
+    "mailto:admissions@cwts.edu",               # 非 http(s)
+    "ftp://www.cwts.edu/zh/admissions/",
 ])
 def test_disallowed_urls(url):
     assert not is_allowed_url(url)
