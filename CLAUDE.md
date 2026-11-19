@@ -27,6 +27,12 @@ git checkout dev
 
 合并到 main 和 push 到 main 属于上线操作，执行前先和用户确认。
 
+## 部署（Streamlit Community Cloud）
+- 生产 App 直接部署 `main` 分支：**push 到 main 会自动重新部署线上**。
+- 测试 App（建议）部署 `dev` 分支：push 到 dev 自动更新，在这里验证后再合并 main。
+- 密钥只在 Streamlit Cloud 后台（App → Settings → Secrets），本地没有；本地运行需把后台 Secrets 复制到 `.streamlit/secrets.toml`。
+- 注意：测试 App 和生产共用同一组 Google Sheets，测试产生的记录需要手动清理。
+
 ## 环境
 - 系统自带 Python 3.9 太旧（代码用了 `str | None`、`tomllib`），用项目里的 `.venv`（Python 3.12）。
 - 重建环境：`uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt -r requirements-dev.txt`
