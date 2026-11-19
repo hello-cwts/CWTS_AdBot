@@ -16,6 +16,14 @@ from config import (
     GPT_MODEL,
     GPT_TEMPERATURE,
 )
+from utils import (
+    convert as _convert,
+    normalize as _normalize,
+    best_fuzzy_match,
+    is_unanswerable,
+    UNANSWERABLE_MARKER,
+    may_be_unanswerable as _may_be_unanswerable,
+)
 from sheets import (
     get_or_create_conversation_id,
     load_qa_bank,
@@ -221,32 +229,6 @@ def trigger_rebuild_if_needed():
 # =========================
 # 精确匹配缓存（rapidfuzz）
 # =========================
-FUZZY_THRESHOLD = 75
-FUZZY_MIN_LEN_RATIO = 0.6   # 长度差太多的不算匹配（防止"宿舍"命中"宿舍可以养宠物吗"）
-
-
-@st.cache_resource
-def _opencc(config: str):
-    try:
-        from opencc import OpenCC
-        return OpenCC(config)
-    except Exception:
-        return None
-
-
-def _convert(text: str, config: str) -> str:
-    cc = _opencc(config)
-    return cc.convert(text) if cc else text
-
-
-def _normalize(text: str) -> str:
-    text = _convert(text, 't2s')  # 繁体转简体，统一字体再比对
-    text = text.lower().strip()
-    text = re.sub(r'[^\w\s]', '', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text
-
-
 @st.cache_data(ttl=300)
 def _load_qa_pairs() -> list[dict]:
     df = load_qa_bank()
@@ -261,25 +243,9 @@ def _load_qa_pairs() -> list[dict]:
 
 def fuzzy_match_qa(query: str) -> str | None:
     try:
-        from rapidfuzz import process, fuzz
-        pairs = _load_qa_pairs()
-        if not pairs:
-            return None
-        normalized_query = _normalize(query)
-        if not normalized_query:
-            return None
-        choices = {p["normalized"]: p["answer"] for p in pairs}
-        results = process.extract(
-            normalized_query, list(choices.keys()), scorer=fuzz.WRatio,
-            score_cutoff=FUZZY_THRESHOLD, limit=5,
-        )
-        for cand, _, _ in results:
-            short, long_ = sorted((len(normalized_query), len(cand)))
-            if long_ and short / long_ >= FUZZY_MIN_LEN_RATIO:
-                return choices[cand]
+        return best_fuzzy_match(query, _load_qa_pairs())
     except Exception:
-        pass
-    return None
+        return None
 
 
 # =========================
@@ -481,18 +447,7 @@ def localize_answer(answer: str) -> str:
 # =========================
 # GPT 生成答案
 # =========================
-UNANSWERABLE_MARKER = "UNANSWERABLE"
 MAX_CONTEXT_CHUNKS = 6
-
-def is_unanswerable(answer: str) -> bool:
-    """容忍模型输出 "UNANSWERABLE." / "**UNANSWERABLE**" 之类的变体"""
-    return re.sub(r'[^A-Za-z]', '', answer).upper() == UNANSWERABLE_MARKER
-
-def _may_be_unanswerable(partial: str) -> bool:
-    """流式输出时：当前内容是否仍可能是 UNANSWERABLE 标记的开头"""
-    if not re.fullmatch(r'[\s*`"\'.]*[A-Za-z]*[\s*`"\'.]*', partial):
-        return False
-    return UNANSWERABLE_MARKER.startswith(re.sub(r'[^A-Za-z]', '', partial).upper())
 
 def stream_answer(query: str, context_chunks: list[dict]):
     """流式生成答案，yield 文字片段。"""

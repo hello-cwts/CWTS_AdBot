@@ -6,14 +6,16 @@ google_creds.json
 __pycache__/
 *.py[cod]
 venv/
+.venv/
+.pytest_cache/
 
 # 内部文档（不上传）
 doc/
 
 # 临时文件
 last_rebuild.txt
-test.py
-test_*.py
+/test.py
+/test_*.py
 main
 
 # 旧文件

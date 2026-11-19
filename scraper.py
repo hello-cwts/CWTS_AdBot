@@ -21,22 +21,11 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
+from utils import fix_creds_json, is_allowed_url
 from config import (
     SEED_URLS, ALLOWED_PATH_KEYWORDS, MAX_PAGES, REQUEST_DELAY,
     FAISS_INDEX_PATH, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL,
 )
-
-
-# =========================
-# 工具函数
-# =========================
-def fix_creds_json(raw: str) -> str:
-    """修复 private_key 里的真实换行符，使 json.loads 能正常解析（用于本地 toml 路径）"""
-    return re.sub(
-        r'("private_key"\s*:\s*")(.*?)(")',
-        lambda m: m.group(1) + m.group(2).replace('\n', '\\n') + m.group(3),
-        raw, flags=re.DOTALL
-    )
 
 
 # =========================
@@ -72,14 +61,6 @@ def load_secrets() -> dict:
 # =========================
 # 网站爬取
 # =========================
-def is_allowed_url(url: str) -> bool:
-    parsed = urlparse(url)
-    if "cwts.edu" not in parsed.netloc:
-        return False
-    path = parsed.path.lower()
-    return any(kw in path for kw in ALLOWED_PATH_KEYWORDS)
-
-
 def fetch_page(url: str) -> tuple[str | None, list[str]]:
     """请求一次页面，返回 (正文, 页面内链接)。正文太短返回 None。"""
     try:
