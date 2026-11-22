@@ -17,9 +17,8 @@ from config import (
     GPT_TEMPERATURE,
 )
 from utils import (
-    convert as _convert,
     normalize as _normalize,
-    best_fuzzy_match,
+    fuzzy_candidates,
     is_unanswerable,
     UNANSWERABLE_MARKER,
     may_be_unanswerable as _may_be_unanswerable,
@@ -97,10 +96,20 @@ T = {
         "zh-TW": "### 🙋 回答",
         "en": "### 🙋 Answer",
     },
+    "searching": {
+        "zh": "🔍 正在检索相关资料…",
+        "zh-TW": "🔍 正在檢索相關資料…",
+        "en": "🔍 Searching for relevant information…",
+    },
     "thinking": {
-        "zh": "⏳ 正在生成回答，请稍候...",
-        "zh-TW": "⏳ 正在生成回答，請稍候...",
-        "en": "⏳ Generating answer, please wait...",
+        "zh": "⏳ 正在思考并生成回答，请稍候…",
+        "zh-TW": "⏳ 正在思考並生成回答，請稍候…",
+        "en": "⏳ Thinking and generating an answer, please wait…",
+    },
+    "source_label": {
+        "zh": "来源",
+        "zh-TW": "來源",
+        "en": "Source",
     },
     "no_result": {
         "zh": "暂时无法回答这个问题，我们已记录您的问题，招生团队会尽快与您联系！如有紧急需要，请发邮件至 admissions@cwts.edu",
@@ -167,7 +176,10 @@ def _build_qa_retriever(pairs: tuple[tuple[str, str], ...]):
 
 def load_qa_retriever():
     """staff 改了 qa_bank 后，语义检索也在 5 分钟内（_load_qa_pairs 的缓存周期）生效"""
-    pairs = tuple((p["question"], p["answer"]) for p in _load_qa_pairs())
+    try:
+        pairs = tuple((p["question"], p["answer"]) for p in _load_qa_pairs())
+    except Exception:
+        pairs = ()  # Sheet 读取失败（已在 load_qa_bank 打日志），用磁盘版本兜底
     if pairs:
         try:
             return _build_qa_retriever(pairs)
@@ -241,11 +253,11 @@ def _load_qa_pairs() -> list[dict]:
     return pairs
 
 
-def fuzzy_match_qa(query: str) -> str | None:
+def fuzzy_candidates_qa(query: str) -> list[dict]:
     try:
-        return best_fuzzy_match(query, _load_qa_pairs())
+        return fuzzy_candidates(query, _load_qa_pairs())
     except Exception:
-        return None
+        return []
 
 
 # =========================
@@ -325,19 +337,22 @@ FORM_LABELS = {
               "email":"电子邮件*","phone":"电话或微信（选填）",
               "consent":"我同意学院以此资料联系我*","submit":"提交",
               "err_name":"请输入姓名","err_email":"请输入正确的邮箱",
-              "err_consent":"请勾选同意条款","ok":"已收到，感谢！您现在可以提问啦。"},
+              "err_consent":"请勾选同意条款","ok":"已收到，感谢！您现在可以提问啦。",
+              "err_write":"提交失败，请稍后再试，或发邮件至 admissions@cwts.edu"},
     "zh-TW": {"title":"📝 基本資訊","desc":"為了更好地協助您，請先填寫以下資訊。",
               "first":"名*","last":"姓*","program":"目標學位項目*",
               "email":"電子郵件*","phone":"電話或微信（選填）",
               "consent":"我同意學院以此資料聯絡我*","submit":"提交",
               "err_name":"請輸入姓名","err_email":"請輸入正確的郵箱",
-              "err_consent":"請勾選同意條款","ok":"已收到，感謝！您現在可以提問囉。"},
+              "err_consent":"請勾選同意條款","ok":"已收到，感謝！您現在可以提問囉。",
+              "err_write":"提交失敗，請稍後再試，或發郵件至 admissions@cwts.edu"},
     "en":    {"title":"📝 Basic Info","desc":"To serve you better, please fill out the form below.",
               "first":"First name*","last":"Last name*","program":"Target Degree Program*",
               "email":"Email*","phone":"Phone or Weixin (optional)",
               "consent":"I consent to be contacted by the seminary*","submit":"Submit",
               "err_name":"Please enter your name","err_email":"Please enter a valid email",
-              "err_consent":"Please provide consent","ok":"Thank you! You can ask questions now."},
+              "err_consent":"Please provide consent","ok":"Thank you! You can ask questions now.",
+              "err_write":"Submission failed. Please try again later or email admissions@cwts.edu"},
 }
 
 def show_signup_form():
@@ -383,7 +398,7 @@ def show_signup_form():
                     st.success(lbl["ok"])
                     st.rerun()
                 else:
-                    st.error(f"写入失败：{err}")
+                    st.error(lbl["err_write"])  # 具体错误已在 append_signup_row 打日志
     st.stop()
 
 
@@ -432,25 +447,25 @@ def translate_to_chinese(query: str) -> str:
         return query
 
 
-def localize_answer(answer: str) -> str:
-    """qa_bank 的答案按用户所选语言输出：简繁用 OpenCC，英文用 GPT 翻译"""
-    if lang_code == "zh":
-        return _convert(answer, 't2s')
-    if lang_code == "zh-TW":
-        return _convert(answer, 's2t')
-    try:
-        return _translate(answer, "Translate the following text into English. Keep names, emails and URLs unchanged. Output only the translation, nothing else.")
-    except Exception:
-        return answer
-
-
 # =========================
 # GPT 生成答案
 # =========================
 MAX_CONTEXT_CHUNKS = 6
 
-def stream_answer(query: str, context_chunks: list[dict]):
-    """流式生成答案，yield 文字片段。"""
+STRICT_QA_RULES = f"""ANSWERING RULES:
+The context is a list of official Q&A pairs maintained by CWTS admissions staff.
+1. First decide whether one of the Q&A pairs asks the SAME thing as the question. Details matter:
+   a different degree program (e.g. ThM vs MDiv), a different group of students (e.g. local vs international),
+   or a different object (e.g. dogs vs cats) means it is NOT the same question.
+2. If one pair is the same question, answer using that pair's answer faithfully. Do not add information that is not in it.
+3. If no pair is the same question, reply with exactly {UNANSWERABLE_MARKER} and nothing else."""
+
+
+def stream_answer(query: str, context_chunks: list[dict], strict: bool = False):
+    """
+    流式生成答案，yield 文字片段。
+    strict=True：context 是 qa_bank 的候选问答，只有确实是同一个问题时才作答，否则回 UNANSWERABLE。
+    """
     import openai
     context = "\n\n".join([c["text"] for c in context_chunks])
     lang_name = {"zh": "Simplified Chinese", "zh-TW": "Traditional Chinese", "en": "English"}[lang_code]
@@ -469,18 +484,23 @@ Always respond in {lang_name}, regardless of the language of the context provide
 The context may be in Chinese even when the question is in English — this is expected. Read and understand the Chinese context, then answer in {lang_name}.
 Be warm, concise, and encouraging.
 
-ANSWERING RULES:
+""" + (STRICT_QA_RULES if strict else f"""ANSWERING RULES:
 1. If the context contains relevant information, even partial, use it to give the best possible answer.
 2. For questions about location, address, contact info, or basic school facts: provide what's available and suggest contacting admissions@cwts.edu for details.
 3. Only reply with {UNANSWERABLE_MARKER} if the context has absolutely no relevant information whatsoever.
-4. Do NOT guess or make up information not present in the context."""
+4. Do NOT guess or make up information not present in the context.""")
 
+    last_line = (
+        f'Answer in {lang_name} only if one Q&A pair is the same question; otherwise reply with exactly "{UNANSWERABLE_MARKER}".'
+        if strict else
+        f'Answer in {lang_name}. Only reply with exactly "{UNANSWERABLE_MARKER}" if the context is completely unrelated.'
+    )
     user_prompt = f"""Question: {query}
 
 Relevant context:
 {context}
 
-Answer in {lang_name}. Only reply with exactly "{UNANSWERABLE_MARKER}" if the context is completely unrelated."""
+{last_line}"""
 
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     stream = client.chat.completions.create(
@@ -496,6 +516,49 @@ Answer in {lang_name}. Only reply with exactly "{UNANSWERABLE_MARKER}" if the co
         content = chunk.choices[0].delta.content
         if content:
             yield content
+
+
+def retrieve_context(query: str, zh_query: str | None) -> list[dict]:
+    """向量检索官网内容 + qa_bank，去重后取前 MAX_CONTEXT_CHUNKS 条"""
+    if zh_query:
+        hits    = search_faiss(query) + search_faiss(zh_query)
+        qa_hits = search_qa_bank(query) + search_qa_bank(zh_query)
+    else:
+        hits    = search_faiss(query)
+        qa_hits = search_qa_bank(query)
+
+    seen, out = set(), []
+    for h in qa_hits + hits:
+        key = h["text"][:100]
+        if key not in seen:
+            out.append(h)
+            seen.add(key)
+    # 送进 GPT 的段落和"参考来源"里展示的保持一致
+    return out[:MAX_CONTEXT_CHUNKS]
+
+
+def render_answer(query: str, chunks: list[dict], strict: bool = False) -> tuple[str | None, str]:
+    """
+    流式显示 GPT 的回答，结束后清空占位（最终答案由调用方用 st.success 显示）。
+    返回 (answer, error)：answer 为 None 表示无法回答；error 非空表示 OpenAI 出错，供 staff 在 unanswered 里查看。
+    """
+    placeholder = st.empty()
+    placeholder.markdown(t("thinking"))  # 第一个字出来之前的提示
+    answer = ""
+    try:
+        for chunk in stream_answer(query, chunks, strict):
+            answer += chunk
+            # 可能是 UNANSWERABLE 的开头时先不显示，避免把标记打到屏幕上
+            if not _may_be_unanswerable(answer):
+                placeholder.markdown(answer + "▌")
+    except Exception as e:
+        print(f"[OpenAI 生成失败] {type(e).__name__}: {e}")
+        placeholder.empty()
+        return None, f"[系统错误，未能生成回答] {type(e).__name__}"
+    placeholder.empty()
+    if not answer.strip() or is_unanswerable(answer):
+        return None, ""
+    return answer, ""
 
 
 # =========================
@@ -543,68 +606,44 @@ if query:
     program  = st.session_state.get("user_program", "")
     first, _, last = name.partition(" ")
 
+    st.markdown(t("answer_title"))
+
     # 英文查询先翻译成中文，用于 fuzzy 匹配和向量检索（qa_bank 与官网内容都是中文）
-    zh_query = translate_to_chinese(query) if lang_code == "en" else None
+    with st.spinner(t("searching")):
+        zh_query = translate_to_chinese(query) if lang_code == "en" else None
+        candidates = fuzzy_candidates_qa(zh_query or query)
 
-    # 第一步：rapidfuzz 精确匹配，命中直接返回，跳过 embedding + GPT
-    fuzzy_answer = fuzzy_match_qa(zh_query or query)
-    if fuzzy_answer:
-        fuzzy_answer = localize_answer(fuzzy_answer)
-        st.markdown(t("answer_title"))
-        st.success(fuzzy_answer)
-        append_pending_row(conv_id, lang_code, first, last, email, program, query, fuzzy_answer)
+    answer, error, hits = None, "", []
 
-    else:
-        # 第二步：向量检索 + GPT 生成
-        if zh_query:
-            hits    = search_faiss(query) + search_faiss(zh_query)
-            qa_hits = search_qa_bank(query) + search_qa_bank(zh_query)
-        else:
-            hits    = search_faiss(query)
-            qa_hits = search_qa_bank(query)
+    # 第一步：qa_bank 里字面相近的候选交给 GPT 核对，确实是同一个问题才作答。
+    # 只调一次 GPT（流式，首字很快出现），不做 embedding 检索。
+    if candidates:
+        qa_chunks = [{"text": f"Q: {c['question']}\nA: {c['answer']}", "source": "qa_bank"}
+                     for c in candidates]
+        answer, error = render_answer(query, qa_chunks, strict=True)
+        if answer:
+            hits = qa_chunks
 
-        combined = qa_hits + hits
-
-        seen = set()
-        hits = []
-        for h in combined:
-            key = h["text"][:100]
-            if key not in seen:
-                hits.append(h)
-                seen.add(key)
-        # 送进 GPT 的段落和"参考来源"里展示的保持一致
-        hits = hits[:MAX_CONTEXT_CHUNKS]
-
+    # 第二步：没有确认命中（且 OpenAI 没出错）→ 向量检索 + GPT 生成
+    if answer is None and not error:
+        with st.spinner(t("searching")):
+            hits = retrieve_context(query, zh_query)
         if hits:
-            st.markdown(t("answer_title"))
-            placeholder = st.empty()
-            answer = ""
-            for chunk in stream_answer(query, hits):
-                answer += chunk
-                # 可能是 UNANSWERABLE 的开头时先不显示，避免把标记打到屏幕上
-                if not _may_be_unanswerable(answer):
-                    placeholder.markdown(answer + "▌")
-            placeholder.empty()
+            answer, error = render_answer(query, hits)
 
-            if is_unanswerable(answer):
-                st.info(t("no_result"))
-                append_unanswered_row(
-                    conv_id, lang_code, first, last,
-                    email, phone, program, query, "",
-                )
-            else:
-                st.success(answer)
-                append_pending_row(conv_id, lang_code, first, last, email, program, query, answer)
+    if answer:
+        st.success(answer)
+        append_pending_row(conv_id, lang_code, first, last, email, program, query, answer)
 
-                with st.expander(t("source_expander"), expanded=False):
-                    for i, h in enumerate(hits, 1):
-                        src = f"[{h['source']}]({h['source']})" if h["source"].startswith("http") else h["source"]
-                        st.markdown(f"**{i}.** {h['text'][:300]}…\n\n<sub>来源: {src}</sub>",
-                                    unsafe_allow_html=True)
-                        st.markdown("<hr>", unsafe_allow_html=True)
-        else:
-            st.info(t("no_result"))
-            append_unanswered_row(
-                conv_id, lang_code, first, last,
-                email, phone, program, query, "",
-            )
+        with st.expander(t("source_expander"), expanded=False):
+            for i, h in enumerate(hits, 1):
+                src = f"[{h['source']}]({h['source']})" if h["source"].startswith("http") else h["source"]
+                st.markdown(f"**{i}.** {h['text'][:300]}…\n\n<sub>{t('source_label')}: {src}</sub>",
+                            unsafe_allow_html=True)
+                st.markdown("<hr>", unsafe_allow_html=True)
+    else:
+        st.info(t("no_result"))
+        append_unanswered_row(
+            conv_id, lang_code, first, last,
+            email, phone, program, query, error,
+        )

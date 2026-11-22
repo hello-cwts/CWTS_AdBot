@@ -20,5 +20,5 @@ main
 
 # 旧文件
 smart_qa_app.py
-import_json.py
+import json.py
 build_faiss.py

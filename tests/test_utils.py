@@ -10,6 +10,7 @@ from utils import (  # noqa: E402
     best_fuzzy_match,
     convert,
     fix_creds_json,
+    fuzzy_candidates,
     is_allowed_url,
     is_unanswerable,
     may_be_unanswerable,
@@ -73,25 +74,57 @@ def test_fuzzy_empty_bank_returns_none():
     assert best_fuzzy_match("如何申请奖学金", []) is None
 
 
+# ---------- 模糊候选（交给 GPT 判断） ----------
+PET_QA = _pairs(
+    ("宿舍可以养猫吗", "ANS_CAT"),
+    ("宿舍可以养狗吗", "ANS_DOG"),
+    ("如何申请奖学金", "ANS_SCHOLARSHIP"),
+)
+
+
+def test_fuzzy_candidates_returns_similar_pairs_best_first():
+    cands = fuzzy_candidates("宿舍可以养狗吗", PET_QA)
+    assert [c["answer"] for c in cands][:2] == ["ANS_DOG", "ANS_CAT"]
+    assert all("question" in c for c in cands)
+
+
+def test_fuzzy_candidates_respects_limit():
+    assert len(fuzzy_candidates("宿舍可以养狗吗", PET_QA, limit=1)) == 1
+
+
+@pytest.mark.parametrize("query", ["", "图书馆几点开门", "宿舍"])
+def test_fuzzy_candidates_none_for_empty_or_unrelated(query):
+    assert fuzzy_candidates(query, PET_QA) == []
+
+
+def test_fuzzy_candidates_empty_bank():
+    assert fuzzy_candidates("宿舍可以养狗吗", []) == []
+
+
 # ---------- UNANSWERABLE 识别 ----------
-@pytest.mark.parametrize("text", ["UNANSWERABLE", "UNANSWERABLE.", "**UNANSWERABLE**", " unanswerable\n", "UNANSWERABLE!"])
+@pytest.mark.parametrize("text", [
+    "UNANSWERABLE", "UNANSWERABLE.", "**UNANSWERABLE**", " unanswerable\n", "UNANSWERABLE!",
+    # 以标记开头、后面又补了一句的，也算无法回答（应记入 unanswered 让 staff 跟进）
+    "UNANSWERABLE. Please contact admissions@cwts.edu", "UNANSWERABLE! Sorry, try the office",
+])
 def test_is_unanswerable_variants(text):
     assert is_unanswerable(text)
 
 
 @pytest.mark.parametrize("text", ["", "The deadline is UNANSWERABLE soon", "申请截止日期是3月1日",
-                                  "UNANSWERABLE! Sorry, try the office"])
+                                  "UNANSWERABLEX"])
 def test_is_unanswerable_rejects_real_answers(text):
     assert not is_unanswerable(text)
 
 
 @pytest.mark.parametrize("partial", ["", "U", "UNANS", "**UNANSWER", "UNANSWERABLE",
-                                     "UNANSWERABLE!", "**UNANSWERABLE!**", "UNANSWERABLE?", "UNANSWERABLE！"])
+                                     "UNANSWERABLE!", "**UNANSWERABLE!**", "UNANSWERABLE?", "UNANSWERABLE！",
+                                     "UNANSWERABLE because"])
 def test_may_be_unanswerable_prefixes(partial):
     assert may_be_unanswerable(partial)
 
 
-@pytest.mark.parametrize("partial", ["The", "申请", "UNANSWERABLE because", "UNX"])
+@pytest.mark.parametrize("partial", ["The", "申请", "UNX", "UNANSWERABLEX"])
 def test_may_be_unanswerable_rejects_real_text(partial):
     assert not may_be_unanswerable(partial)
 

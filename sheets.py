@@ -99,6 +99,7 @@ def append_signup_row(conversation_id: str, lang: str, first_name: str,
         ])
         return True, ""
     except Exception as e:
+        print(f"[append_signup_row 写入失败] conv={conversation_id} {type(e).__name__}: {e}")
         return False, str(e)
 
 
@@ -124,8 +125,11 @@ def load_qa_bank() -> pd.DataFrame:
         if not records:
             return pd.DataFrame(columns=["question", "answer"])
         return pd.DataFrame(records)
-    except Exception:
-        return pd.DataFrame(columns=["question", "answer"])
+    except Exception as e:
+        # 不返回空表：st.cache_data 不缓存异常，下次请求会重试；
+        # 返回空表会被缓存 5 分钟，期间 Q&A 库悄悄失效。调用方负责兜底。
+        print(f"[load_qa_bank 读取失败] {type(e).__name__}: {e}")
+        raise
 
 
 def append_pending_row(conversation_id: str, lang: str, first_name: str,
@@ -133,7 +137,7 @@ def append_pending_row(conversation_id: str, lang: str, first_name: str,
                        question: str, gpt_answer: str) -> None:
     """
     GPT成功回答后，写入 pending tab 等待staff审核。
-    失败静默处理，不影响用户体验。
+    失败只打日志（Streamlit Cloud → Manage app → Logs 可见），不影响用户体验。
     """
     try:
         sh = get_sheet_b()
@@ -159,8 +163,8 @@ def append_pending_row(conversation_id: str, lang: str, first_name: str,
             gpt_answer,
             "待审",
         ])
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[append_pending_row 写入失败] conv={conversation_id} {type(e).__name__}: {e}")
 
 
 def append_unanswered_row(conversation_id: str, lang: str, first_name: str,
@@ -195,5 +199,5 @@ def append_unanswered_row(conversation_id: str, lang: str, first_name: str,
             "待处理",
             "",  # staff_notes 留空
         ])
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[append_unanswered_row 写入失败] conv={conversation_id} {type(e).__name__}: {e}")
