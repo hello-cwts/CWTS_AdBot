@@ -74,7 +74,8 @@ def is_unanswerable(answer: str) -> bool:
 
 def may_be_unanswerable(partial: str) -> bool:
     """流式输出时：当前内容是否仍可能是 UNANSWERABLE 标记的开头"""
-    if not re.fullmatch(r'[\s*`"\'.]*[A-Za-z]*[\s*`"\'.]*', partial):
+    # 标记前后允许的符号：空白、markdown 符号、引号、半角/全角的 . ! ?
+    if not re.fullmatch(r'[\s*`"\'.!?！？。]*[A-Za-z]*[\s*`"\'.!?！？。]*', partial):
         return False
     return UNANSWERABLE_MARKER.startswith(re.sub(r'[^A-Za-z]', '', partial).upper())
 

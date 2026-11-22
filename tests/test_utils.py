@@ -74,17 +74,19 @@ def test_fuzzy_empty_bank_returns_none():
 
 
 # ---------- UNANSWERABLE 识别 ----------
-@pytest.mark.parametrize("text", ["UNANSWERABLE", "UNANSWERABLE.", "**UNANSWERABLE**", " unanswerable\n"])
+@pytest.mark.parametrize("text", ["UNANSWERABLE", "UNANSWERABLE.", "**UNANSWERABLE**", " unanswerable\n", "UNANSWERABLE!"])
 def test_is_unanswerable_variants(text):
     assert is_unanswerable(text)
 
 
-@pytest.mark.parametrize("text", ["", "The deadline is UNANSWERABLE soon", "申请截止日期是3月1日"])
+@pytest.mark.parametrize("text", ["", "The deadline is UNANSWERABLE soon", "申请截止日期是3月1日",
+                                  "UNANSWERABLE! Sorry, try the office"])
 def test_is_unanswerable_rejects_real_answers(text):
     assert not is_unanswerable(text)
 
 
-@pytest.mark.parametrize("partial", ["", "U", "UNANS", "**UNANSWER", "UNANSWERABLE"])
+@pytest.mark.parametrize("partial", ["", "U", "UNANS", "**UNANSWER", "UNANSWERABLE",
+                                     "UNANSWERABLE!", "**UNANSWERABLE!**", "UNANSWERABLE?", "UNANSWERABLE！"])
 def test_may_be_unanswerable_prefixes(partial):
     assert may_be_unanswerable(partial)
 
