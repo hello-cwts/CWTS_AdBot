@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils import (  # noqa: E402
     best_fuzzy_match,
     convert,
+    escape_markdown,
     fix_creds_json,
     fuzzy_candidates,
     is_allowed_url,
@@ -162,3 +163,12 @@ def test_fix_creds_json_escapes_newlines_in_private_key():
     fixed = json.loads(fix_creds_json(raw))
     assert fixed["private_key"] == "-----BEGIN KEY-----\nabc\n-----END KEY-----\n"
     assert fixed["type"] == "service_account"
+
+
+# ---------- 显示用户输入 ----------
+def test_escape_markdown_neutralizes_formatting():
+    assert escape_markdown("**粗体** [链接](http://x) <b>") == r"\*\*粗体\*\* \[链接\]\(http://x\) \<b\>"
+
+
+def test_escape_markdown_keeps_plain_text_and_joins_lines():
+    assert escape_markdown("如何申请奖学金？\n第二行") == "如何申请奖学金？ 第二行"

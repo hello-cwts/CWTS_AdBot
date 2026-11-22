@@ -125,3 +125,14 @@ def is_allowed_url(url: str) -> bool:
         return False
     path = parsed.path.lower()
     return any(kw in path for kw in ALLOWED_PATH_KEYWORDS)
+
+
+# =========================
+# 显示用户输入
+# =========================
+_MD_SPECIAL = re.compile(r'([\\`*_{}\[\]()#+\-.!|<>~])')
+
+
+def escape_markdown(text: str) -> str:
+    """把用户输入原样显示在 st.markdown 里：转义 markdown/HTML 特殊符号，换行合并成空格"""
+    return _MD_SPECIAL.sub(r'\\\1', " ".join(text.split()))

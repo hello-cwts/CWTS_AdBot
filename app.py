@@ -18,6 +18,7 @@ from config import (
 )
 from utils import (
     normalize as _normalize,
+    escape_markdown,
     fuzzy_candidates,
     is_unanswerable,
     UNANSWERABLE_MARKER,
@@ -87,9 +88,14 @@ T = {
         "en": "🔍 Enter your question (e.g. How to apply for scholarship / What is financial proof?)",
     },
     "input_placeholder": {
-        "zh": "在此输入问题…按回车提交",
-        "zh-TW": "在此輸入問題…按 Enter 提交",
-        "en": "Type your question here… press Enter to submit",
+        "zh": "在此输入问题，按 Enter 或点击右侧箭头发送",
+        "zh-TW": "在此輸入問題，按 Enter 或點擊右側箭頭送出",
+        "en": "Type your question, then press Enter or click the arrow to send",
+    },
+    "your_question": {
+        "zh": "您的问题：",
+        "zh-TW": "您的問題：",
+        "en": "Your question:",
     },
     "answer_title": {
         "zh": "### 🙋 回答",
@@ -581,19 +587,11 @@ trigger_rebuild_if_needed()
 st.markdown(f"<h4 style='font-weight:400;margin-top:20px;'><strong>{t('search_prompt')}</strong></h4>",
             unsafe_allow_html=True)
 
-with st.form("query_form", clear_on_submit=False):
-    col1, col2 = st.columns([11, 1])
-    with col1:
-        query = st.text_input(
-            label="query",
-            placeholder=t("input_placeholder"),
-            label_visibility="collapsed",
-        )
-    with col2:
-        submitted = st.form_submit_button("→", use_container_width=True)
-
-if not submitted:
-    query = None
+# 用 chat_input：按 Enter 直接发送（Shift+Enter 换行，中文输入法选字的 Enter 不会误发），
+# 框内自带发送按钮，发送后自动清空，方便接着问下一个问题。
+# 放在 container 里，输入框就留在这里，不会固定到页面底部。
+with st.container():
+    query = st.chat_input(t("input_placeholder"), max_chars=500)
 
 # =========================
 # 检索 + 回答
@@ -606,6 +604,8 @@ if query:
     program  = st.session_state.get("user_program", "")
     first, _, last = name.partition(" ")
 
+    # 输入框发送后会清空，所以把刚问的问题显示在回答上方
+    st.markdown(f"**{t('your_question')}** {escape_markdown(query)}")
     st.markdown(t("answer_title"))
 
     # 英文查询先翻译成中文，用于 fuzzy 匹配和向量检索（qa_bank 与官网内容都是中文）
