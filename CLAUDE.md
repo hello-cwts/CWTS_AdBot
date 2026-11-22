@@ -29,9 +29,13 @@ git checkout dev
 
 ## 部署（Streamlit Community Cloud）
 - 生产 App 直接部署 `main` 分支：**push 到 main 会自动重新部署线上**。
-- 测试 App（建议）部署 `dev` 分支：push 到 dev 自动更新，在这里验证后再合并 main。
-- 密钥只在 Streamlit Cloud 后台（App → Settings → Secrets），本地没有；本地运行需把后台 Secrets 复制到 `.streamlit/secrets.toml`。
-- 注意：测试 App 和生产共用同一组 Google Sheets，测试产生的记录需要手动清理。
+- 不单独部署测试 App：改动在本地 `streamlit run app.py` 验证即可。
+- 密钥只在 Streamlit Cloud 后台（App → Settings → Secrets）；本地运行需把后台 Secrets 复制到 `.streamlit/secrets.toml`。
+- **本地务必连测试 Sheet**：本地 `secrets.toml` 里的 `GOOGLE_SHEET_ID` / `GOOGLE_SHEET_B_ID` 应指向生产 Sheet 的测试副本（副本需共享给同一个 service account），否则本地提问、报名会写进生产的 signups / pending / unanswered。线上用的是后台 Secrets，不受影响。
+
+## CI（GitHub Actions）
+- `.github/workflows/tests.yml`：push 到 dev / main、或向 main 发 PR 时自动跑 pytest。
+- 合并 main 前先确认 dev 最新一次 CI 是绿的（GitHub 仓库 → Actions，或 `gh run list --branch dev`）。
 
 ## 环境
 - 系统自带 Python 3.9 太旧（代码用了 `str | None`、`tomllib`），用项目里的 `.venv`（Python 3.12）。
