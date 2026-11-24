@@ -16,6 +16,7 @@ import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
+from utils import build_row
 from config import (
     SIGNUP_SHEET_TAB,
     QA_SHEET_TAB,
@@ -62,16 +63,45 @@ def get_sheet_a():
     return client.open_by_url(st.secrets["GOOGLE_SHEET_ID"])
 
 
-def ensure_signups_headers(ws):
-    """确保 signups tab 有正确的列名（兼容旧数据）"""
-    headers = [
-        "conversation_id", "timestamp", "lang",
-        "first_name", "last_name", "program",
-        "email", "phone_or_weixin", "consent"
-    ]
-    existing = ws.row_values(1)
-    if existing != headers:
-        ws.insert_row(headers, index=1)
+SIGNUP_HEADERS = [
+    "conversation_id", "timestamp", "lang",
+    "first_name", "last_name", "program",
+    "email", "phone_or_weixin", "consent",
+]
+PENDING_HEADERS = [
+    "conversation_id", "timestamp", "lang",
+    "first_name", "last_name", "email", "phone_or_weixin", "program",
+    "question", "gpt_answer", "status",
+]
+UNANSWERED_HEADERS = [
+    "conversation_id", "timestamp", "lang",
+    "first_name", "last_name", "email", "phone_or_weixin",
+    "program", "question", "gpt_answer", "status", "staff_notes",
+]
+
+
+def _get_or_create_tab(sh, title: str, headers: list[str]):
+    try:
+        return sh.worksheet(title)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=title, rows=2000, cols=max(20, len(headers)))
+        ws.append_row(headers)
+        return ws
+
+
+def _append_by_header(ws, default_headers: list[str], values: dict) -> None:
+    """
+    按第一行表头的名字写入，staff 调整列顺序或加列都不会错位。
+    第一行是空的就先写入默认表头。
+    """
+    headers = ws.row_values(1)
+    if not any(str(h).strip() for h in headers):
+        ws.update([default_headers], "A1")
+        headers = default_headers
+    row, missing = build_row(headers, values)
+    if missing:
+        print(f"[{ws.title}] 表头里没有这些列，对应的值未写入：{missing}")
+    ws.append_row(row, table_range="A1")
 
 
 def append_signup_row(conversation_id: str, lang: str, first_name: str,
@@ -79,24 +109,18 @@ def append_signup_row(conversation_id: str, lang: str, first_name: str,
                       phone_or_weixin: str, consent: bool) -> tuple[bool, str]:
     """写入用户注册记录到 Sheet A"""
     try:
-        sh = get_sheet_a()
-        try:
-            ws = sh.worksheet(SIGNUP_SHEET_TAB)
-        except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=SIGNUP_SHEET_TAB, rows=2000, cols=20)
-            ensure_signups_headers(ws)
-
-        ws.append_row([
-            conversation_id,
-            datetime.now(timezone.utc).isoformat(),
-            lang,
-            first_name,
-            last_name,
-            program,
-            email,
-            phone_or_weixin or "",
-            "yes" if consent else "no",
-        ])
+        ws = _get_or_create_tab(get_sheet_a(), SIGNUP_SHEET_TAB, SIGNUP_HEADERS)
+        _append_by_header(ws, SIGNUP_HEADERS, {
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "lang": lang,
+            "first_name": first_name,
+            "last_name": last_name,
+            "program": program,
+            "email": email,
+            "phone_or_weixin": phone_or_weixin or "",
+            "consent": "yes" if consent else "no",
+        })
         return True, ""
     except Exception as e:
         print(f"[append_signup_row 写入失败] conv={conversation_id} {type(e).__name__}: {e}")
@@ -134,35 +158,27 @@ def load_qa_bank() -> pd.DataFrame:
 
 def append_pending_row(conversation_id: str, lang: str, first_name: str,
                        last_name: str, email: str, program: str,
-                       question: str, gpt_answer: str) -> None:
+                       question: str, gpt_answer: str,
+                       phone_or_weixin: str = "") -> None:
     """
     GPT成功回答后，写入 pending tab 等待staff审核。
     失败只打日志（Streamlit Cloud → Manage app → Logs 可见），不影响用户体验。
     """
     try:
-        sh = get_sheet_b()
-        try:
-            ws = sh.worksheet(PENDING_SHEET_TAB)
-        except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=PENDING_SHEET_TAB, rows=2000, cols=20)
-            ws.append_row([
-                "conversation_id", "timestamp", "lang",
-                "first_name", "last_name", "email", "program",
-                "question", "gpt_answer", "status"
-            ])
-
-        ws.append_row([
-            conversation_id,
-            datetime.now(timezone.utc).isoformat(),
-            lang,
-            first_name,
-            last_name,
-            email,
-            program,
-            question,
-            gpt_answer,
-            "待审",
-        ])
+        ws = _get_or_create_tab(get_sheet_b(), PENDING_SHEET_TAB, PENDING_HEADERS)
+        _append_by_header(ws, PENDING_HEADERS, {
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "lang": lang,
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "phone_or_weixin": phone_or_weixin or "",
+            "program": program,
+            "question": question,
+            "gpt_answer": gpt_answer,
+            "status": "待审",
+        })
     except Exception as e:
         print(f"[append_pending_row 写入失败] conv={conversation_id} {type(e).__name__}: {e}")
 
@@ -174,30 +190,20 @@ def append_unanswered_row(conversation_id: str, lang: str, first_name: str,
     GPT无法回答时，写入 unanswered tab，staff需跟进并联系用户。
     """
     try:
-        sh = get_sheet_b()
-        try:
-            ws = sh.worksheet(UNANSWERED_SHEET_TAB)
-        except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=UNANSWERED_SHEET_TAB, rows=2000, cols=20)
-            ws.append_row([
-                "conversation_id", "timestamp", "lang",
-                "first_name", "last_name", "email", "phone_or_weixin",
-                "program", "question", "gpt_answer", "status", "staff_notes"
-            ])
-
-        ws.append_row([
-            conversation_id,
-            datetime.now(timezone.utc).isoformat(),
-            lang,
-            first_name,
-            last_name,
-            email,
-            phone_or_weixin or "",
-            program,
-            question,
-            gpt_answer or "",
-            "待处理",
-            "",  # staff_notes 留空
-        ])
+        ws = _get_or_create_tab(get_sheet_b(), UNANSWERED_SHEET_TAB, UNANSWERED_HEADERS)
+        _append_by_header(ws, UNANSWERED_HEADERS, {
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "lang": lang,
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "phone_or_weixin": phone_or_weixin or "",
+            "program": program,
+            "question": question,
+            "gpt_answer": gpt_answer or "",
+            "status": "待处理",
+            "staff_notes": "",
+        })
     except Exception as e:
         print(f"[append_unanswered_row 写入失败] conv={conversation_id} {type(e).__name__}: {e}")

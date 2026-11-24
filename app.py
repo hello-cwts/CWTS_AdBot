@@ -633,7 +633,8 @@ if query:
 
     if answer:
         st.success(answer)
-        append_pending_row(conv_id, lang_code, first, last, email, program, query, answer)
+        append_pending_row(conv_id, lang_code, first, last, email, program, query, answer,
+                           phone_or_weixin=phone)
 
         with st.expander(t("source_expander"), expanded=False):
             for i, h in enumerate(hits, 1):

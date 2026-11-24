@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils import (  # noqa: E402
     best_fuzzy_match,
+    build_row,
     convert,
     escape_markdown,
     fix_creds_json,
@@ -172,3 +173,30 @@ def test_escape_markdown_neutralizes_formatting():
 
 def test_escape_markdown_keeps_plain_text_and_joins_lines():
     assert escape_markdown("如何申请奖学金？\n第二行") == "如何申请奖学金？ 第二行"
+
+
+# ---------- 按表头写入 Sheet ----------
+def test_build_row_follows_header_order():
+    headers = ["conversation_id", "email", "phone_or_weixin", "program", "question"]
+    row, missing = build_row(headers, {"question": "Q", "program": "MDiv", "email": "a@b.c",
+                                       "conversation_id": "C1", "phone_or_weixin": "123"})
+    assert row == ["C1", "a@b.c", "123", "MDiv", "Q"]
+    assert missing == []
+
+
+def test_build_row_leaves_unknown_columns_blank_and_reports_missing():
+    # staff 自己加的列（如 "PT - 太平洋时间"）留空；表头里没有的字段报告出来
+    headers = ["timestamp", "PT - 太平洋时间", "email"]
+    row, missing = build_row(headers, {"timestamp": "T", "email": "e", "status": "待审"})
+    assert row == ["T", "", "e"]
+    assert missing == ["status"]
+
+
+def test_build_row_header_match_ignores_case_and_spaces():
+    row, _ = build_row([" Email ", "STATUS"], {"email": "e", "status": "s"})
+    assert row == ["e", "s"]
+
+
+def test_build_row_trims_trailing_empty_headers_and_maps_none():
+    row, _ = build_row(["a", "b", "", ""], {"a": None, "b": 1})
+    assert row == ["", 1]

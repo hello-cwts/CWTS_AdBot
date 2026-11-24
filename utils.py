@@ -136,3 +136,34 @@ _MD_SPECIAL = re.compile(r'([\\`*_{}\[\]()#+\-.!|<>~])')
 def escape_markdown(text: str) -> str:
     """把用户输入原样显示在 st.markdown 里：转义 markdown/HTML 特殊符号，换行合并成空格"""
     return _MD_SPECIAL.sub(r'\\\1', " ".join(text.split()))
+
+
+# =========================
+# Google Sheet：按表头名字排列一行
+# =========================
+def _header_key(h: str) -> str:
+    return str(h).strip().lower()
+
+
+def build_row(headers: list[str], values: dict) -> tuple[list, list[str]]:
+    """
+    按 Sheet 第一行的表头名字排列要写入的值，避免列顺序变动/staff 加列导致错位。
+    表头匹配忽略大小写和首尾空格；values 里没有的列留空。
+    返回 (row, missing)：missing 是表头里找不到的字段名（这些值没写进去，调用方应打日志）。
+    """
+    index = {}
+    for i, h in enumerate(headers):
+        index.setdefault(_header_key(h), i)
+    # 去掉末尾的空表头，避免整行写得过长
+    width = len(headers)
+    while width and not str(headers[width - 1]).strip():
+        width -= 1
+    row = [""] * width
+    missing = []
+    for k, v in values.items():
+        i = index.get(_header_key(k))
+        if i is None or i >= width:
+            missing.append(k)
+        else:
+            row[i] = "" if v is None else v
+    return row, missing
