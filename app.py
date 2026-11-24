@@ -20,6 +20,7 @@ from utils import (
     normalize as _normalize,
     escape_markdown,
     fuzzy_candidates,
+    is_near_exact,
     is_unanswerable,
     UNANSWERABLE_MARKER,
     may_be_unanswerable as _may_be_unanswerable,
@@ -636,6 +637,12 @@ if query:
         answer, error = render_answer(query, qa_chunks, strict=True)
         if answer:
             hits = qa_chunks
+        elif error and lang_code != "en" and is_near_exact(query, candidates[0]["question"]):
+            # 降级：GPT 不可用（限流/余额不足等），但问题与 qa_bank 几乎一字不差，
+            # 直接给出 staff 写好的答案（按所选简繁转换），不让学生空手而归
+            print(f"[降级] GPT 不可用，直接使用 qa_bank 近乎完全匹配的答案：{candidates[0]['question']}")
+            answer = _convert(candidates[0]["answer"], "t2s" if lang_code == "zh" else "s2t")
+            hits, error = qa_chunks[:1], ""
 
     # 第二步：没有确认命中（且 OpenAI 没出错）→ 向量检索 + GPT 生成
     if answer is None and not error:

@@ -14,6 +14,7 @@ from utils import (  # noqa: E402
     fix_creds_json,
     fuzzy_candidates,
     is_allowed_url,
+    is_near_exact,
     normalize_url,
     is_unanswerable,
     may_be_unanswerable,
@@ -221,3 +222,19 @@ def test_normalize_url_keeps_path_case_and_distinct_pages():
     assert normalize_url("https://www.cwts.edu/zh/about") != normalize_url("https://www.cwts.edu/zh/academic")
     assert normalize_url("https://www.cwts.edu/") == "https://www.cwts.edu/"
     assert normalize_url("http://www.cwts.edu:8080/zh/") == "http://www.cwts.edu:8080/zh"
+
+
+# ---------- GPT 不可用时的降级匹配 ----------
+@pytest.mark.parametrize("q", ["神学硕士（ThM）项目的申请费和学费是多少？", "神學碩士(ThM)項目的申請費和學費是多少", "神学硕士ThM项目的申请费和学费是多少"])
+def test_near_exact_accepts_same_question_variants(q):
+    assert is_near_exact(q, "神学硕士（ThM）项目的申请费和学费是多少？")
+
+
+@pytest.mark.parametrize("q,question", [
+    ("道学硕士（MDiv）项目的申请截止时间是什么时候？", "神学硕士（ThM）项目的申请截止时间是什么时候？"),
+    ("宿舍可以养狗吗", "宿舍可以养猫吗"),
+    ("本地学生是否可申请新生奖学金", "国际学生是否可申请新生奖学金"),
+    ("", "宿舍可以养猫吗"),
+])
+def test_near_exact_rejects_near_misses(q, question):
+    assert not is_near_exact(q, question)

@@ -66,6 +66,19 @@ def fuzzy_candidates(query: str, pairs: list[dict], limit: int = 3) -> list[dict
     return out[:limit]
 
 
+NEAR_EXACT_THRESHOLD = 95
+
+
+def is_near_exact(query: str, question: str) -> bool:
+    """
+    归一化后几乎一字不差（只差标点/简繁/空格/个别字）。
+    GPT 不可用时，只有这种程度的匹配才允许不经核对直接给出 qa_bank 的答案。
+    """
+    from rapidfuzz import fuzz
+    a, b = normalize(query), normalize(question)
+    return bool(a and b) and fuzz.ratio(a, b) >= NEAR_EXACT_THRESHOLD
+
+
 def best_fuzzy_match(query: str, pairs: list[dict]) -> str | None:
     """返回最相近候选的答案或 None"""
     cands = fuzzy_candidates(query, pairs, limit=1)
