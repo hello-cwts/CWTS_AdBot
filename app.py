@@ -3,7 +3,6 @@ app.py
 CWTS 招生FAQ Chatbot v2
 """
 
-import time
 import threading
 import streamlit as st
 import re
@@ -17,6 +16,7 @@ from config import (
     GPT_TEMPERATURE,
 )
 from utils import (
+    convert as _convert,
     normalize as _normalize,
     escape_markdown,
     fuzzy_candidates,
@@ -134,53 +134,51 @@ def t(key: str) -> str:
 
 
 # =========================
-# FAISS 检索器
+# OpenAI 客户端 / 向量库
 # =========================
-@st.cache_resource(ttl=3600)
-def load_faiss_retriever():
-    from langchain_community.vectorstores import FAISS
+# OpenAI 出错（限流、余额不足等）时只重试 1 次，避免学生白等十几秒
+OPENAI_MAX_RETRIES = 1
+OPENAI_TIMEOUT = 30
+
+
+@st.cache_resource
+def get_openai_client():
+    import openai
+    return openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"],
+                         max_retries=OPENAI_MAX_RETRIES, timeout=OPENAI_TIMEOUT)
+
+
+@st.cache_resource
+def get_embeddings():
     from langchain_openai import OpenAIEmbeddings
-    embeddings = OpenAIEmbeddings(
-        openai_api_key=st.secrets["OPENAI_API_KEY"],
-        model=EMBEDDING_MODEL,
-    )
-    return FAISS.load_local(
-        FAISS_INDEX_PATH, embeddings,
-        allow_dangerous_deserialization=True,
-    ).as_retriever(search_kwargs={"k": 3})
+    return OpenAIEmbeddings(openai_api_key=st.secrets["OPENAI_API_KEY"], model=EMBEDDING_MODEL,
+                            max_retries=OPENAI_MAX_RETRIES, request_timeout=OPENAI_TIMEOUT)
 
 
 @st.cache_resource(ttl=3600)
-def load_qa_faiss_retriever():
+def load_faiss_store():
+    from langchain_community.vectorstores import FAISS
+    return FAISS.load_local(FAISS_INDEX_PATH, get_embeddings(), allow_dangerous_deserialization=True)
+
+
+@st.cache_resource(ttl=3600)
+def load_qa_faiss_store():
     """磁盘上的 qa_bank 向量库，仅在读取 Sheet 失败时作为后备"""
     from langchain_community.vectorstores import FAISS
-    from langchain_openai import OpenAIEmbeddings
-    embeddings = OpenAIEmbeddings(
-        openai_api_key=st.secrets["OPENAI_API_KEY"],
-        model=EMBEDDING_MODEL,
-    )
-    return FAISS.load_local(
-        "faiss_index_qa", embeddings,
-        allow_dangerous_deserialization=True,
-    ).as_retriever(search_kwargs={"k": 2})
+    return FAISS.load_local("faiss_index_qa", get_embeddings(), allow_dangerous_deserialization=True)
 
 
 @st.cache_resource(max_entries=1)
-def _build_qa_retriever(pairs: tuple[tuple[str, str], ...]):
+def _build_qa_store(pairs: tuple[tuple[str, str], ...]):
     """按 qa_bank 当前内容在内存中建向量库；内容一变（缓存 key 变）就重建，旧的自动淘汰"""
     from langchain_community.vectorstores import FAISS
     from langchain_core.documents import Document
-    from langchain_openai import OpenAIEmbeddings
-    embeddings = OpenAIEmbeddings(
-        openai_api_key=st.secrets["OPENAI_API_KEY"],
-        model=EMBEDDING_MODEL,
-    )
     docs = [Document(page_content=f"Q: {q}\nA: {a}", metadata={"source": "qa_bank"})
             for q, a in pairs]
-    return FAISS.from_documents(docs, embeddings).as_retriever(search_kwargs={"k": 2})
+    return FAISS.from_documents(docs, get_embeddings())
 
 
-def load_qa_retriever():
+def load_qa_store():
     """staff 改了 qa_bank 后，语义检索也在 5 分钟内（_load_qa_pairs 的缓存周期）生效"""
     try:
         pairs = tuple((p["question"], p["answer"]) for p in _load_qa_pairs())
@@ -188,10 +186,10 @@ def load_qa_retriever():
         pairs = ()  # Sheet 读取失败（已在 load_qa_bank 打日志），用磁盘版本兜底
     if pairs:
         try:
-            return _build_qa_retriever(pairs)
+            return _build_qa_store(pairs)
         except Exception as e:
             print(f"[qa_bank 向量库构建失败，改用磁盘版本] {e}")
-    return load_qa_faiss_retriever()
+    return load_qa_faiss_store()
 
 
 # =========================
@@ -214,9 +212,14 @@ def should_rebuild() -> bool:
         return False
     try:
         last = float(Path(LAST_REBUILD_FILE).read_text().strip())
-        return (now - last) / 3600 >= REBUILD_INTERVAL_HOURS
     except Exception:
-        return True
+        # Streamlit Cloud 重启后临时磁盘上的记录会丢失；改用索引文件的修改时间
+        # （即部署/上次重建的时间），否则每次重启都会全站重爬、重算向量
+        try:
+            last = (Path(FAISS_INDEX_PATH) / "index.faiss").stat().st_mtime
+        except Exception:
+            return True
+    return (now - last) / 3600 >= REBUILD_INTERVAL_HOURS
 
 def mark_rebuilt():
     Path(LAST_REBUILD_FILE).write_text(str(datetime.now(timezone.utc).timestamp()))
@@ -226,8 +229,8 @@ def async_rebuild(state: dict):
         from scraper import rebuild_index
         if rebuild_index(st.secrets["OPENAI_API_KEY"]):
             mark_rebuilt()
-            load_faiss_retriever.clear()
-            load_qa_faiss_retriever.clear()
+            load_faiss_store.clear()
+            load_qa_faiss_store.clear()
     except Exception as e:
         print(f"[后台重建失败] {e}")
     finally:
@@ -281,7 +284,7 @@ if not st.session_state.verse_displayed:
   0%{opacity:0;transform:translateY(8px)}15%{opacity:1;transform:translateY(0)}85%{opacity:1}100%{opacity:0}
 }
 .fade-in-out{animation:fadeInOut 3.2s ease-in-out forwards}
-.verse-wrap{display:flex;justify-content:center;align-items:center;margin:56px 0}
+.verse-wrap{position:fixed;inset:0;z-index:1000;pointer-events:none;display:flex;justify-content:center;align-items:center}
 .verse-card{backdrop-filter:saturate(140%) blur(10px);background:rgba(255,255,255,.86);
   border:1px solid rgba(0,0,0,.06);border-radius:16px;padding:28px 36px;
   box-shadow:0 12px 32px rgba(0,0,0,.14);max-width:760px;width:min(92vw,760px);text-align:center}
@@ -292,7 +295,6 @@ if not st.session_state.verse_displayed:
   color:#666;border:1px solid rgba(107,78,255,.25);background:rgba(107,78,255,.08);
   padding:4px 10px;border-radius:999px;margin-bottom:10px}
 </style>
-<br/><br/>
 <div class="verse-wrap fade-in-out">
   <div class="verse-card">
     <div class="badge">校訓</div>
@@ -301,8 +303,7 @@ if not st.session_state.verse_displayed:
   </div>
 </div>
 """, unsafe_allow_html=True)
-    time.sleep(4)
-    quote_area.empty()
+    # 浮层 + CSS 动画自行淡出，不再 time.sleep 阻塞页面（以前首次打开要干等 4 秒才出现表单）
     st.session_state.verse_displayed = True
 
 
@@ -397,7 +398,8 @@ def show_signup_form():
                 )
                 if ok:
                     st.session_state.signed_up    = True
-                    st.session_state.user_name    = f"{first_name.strip()} {last_name.strip()}"
+                    st.session_state.user_first   = first_name.strip()
+                    st.session_state.user_last    = last_name.strip()
                     st.session_state.user_email   = email.strip()
                     st.session_state.user_phone   = (phone or "").strip()
                     st.session_state.user_program = program
@@ -409,33 +411,10 @@ def show_signup_form():
 
 
 # =========================
-# 检索函数
-# =========================
-def search_faiss(query: str) -> list[dict]:
-    try:
-        retriever = load_faiss_retriever()
-        docs = retriever.invoke(query)
-        return [{"text": d.page_content, "source": d.metadata.get("source", "")} for d in docs]
-    except Exception:
-        return []
-
-
-def search_qa_bank(query: str) -> list[dict]:
-    try:
-        retriever = load_qa_retriever()
-        docs = retriever.invoke(query)
-        return [{"text": d.page_content, "source": "qa_bank"} for d in docs]
-    except Exception:
-        return []
-
-
-# =========================
 # 英文查询翻译为中文
 # =========================
 def _translate(text: str, instruction: str) -> str:
-    import openai
-    client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-    resp = client.chat.completions.create(
+    resp = get_openai_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": instruction},
@@ -456,7 +435,10 @@ def translate_to_chinese(query: str) -> str:
 # =========================
 # GPT 生成答案
 # =========================
-MAX_CONTEXT_CHUNKS = 6
+WEB_K = 5               # 每个问题向量从官网索引取几段
+QA_K = 4                # 每个问题向量从 qa_bank 取几条
+MAX_WEB_CHUNKS = 5      # 去重后最多送给 GPT 的官网段落
+MAX_QA_CHUNKS = 4       # 去重后最多送给 GPT 的 qa_bank 条目
 
 STRICT_QA_RULES = f"""ANSWERING RULES:
 The context is a list of official Q&A pairs maintained by CWTS admissions staff.
@@ -472,7 +454,6 @@ def stream_answer(query: str, context_chunks: list[dict], strict: bool = False):
     流式生成答案，yield 文字片段。
     strict=True：context 是 qa_bank 的候选问答，只有确实是同一个问题时才作答，否则回 UNANSWERABLE。
     """
-    import openai
     context = "\n\n".join([c["text"] for c in context_chunks])
     lang_name = {"zh": "Simplified Chinese", "zh-TW": "Traditional Chinese", "en": "English"}[lang_code]
 
@@ -491,10 +472,12 @@ The context may be in Chinese even when the question is in English — this is e
 Be warm, concise, and encouraging.
 
 """ + (STRICT_QA_RULES if strict else f"""ANSWERING RULES:
-1. If the context contains relevant information, even partial, use it to give the best possible answer.
-2. For questions about location, address, contact info, or basic school facts: provide what's available and suggest contacting admissions@cwts.edu for details.
-3. Only reply with {UNANSWERABLE_MARKER} if the context has absolutely no relevant information whatsoever.
-4. Do NOT guess or make up information not present in the context.""")
+1. Context items starting with "Q:" / "A:" are official answers written by CWTS admissions staff. When one is relevant, prefer it over website text.
+2. If the context contains relevant information, even partial, use it to give the best possible answer.
+3. If the question is only partly covered, answer the covered part and suggest contacting admissions@cwts.edu for the rest.
+4. Be precise about which degree program or student group a fact applies to; never apply one program's facts to another.
+5. Only reply with {UNANSWERABLE_MARKER} (alone, nothing else) if nothing in the context is related to the question.
+6. Do NOT guess or make up information not present in the context.""")
 
     last_line = (
         f'Answer in {lang_name} only if one Q&A pair is the same question; otherwise reply with exactly "{UNANSWERABLE_MARKER}".'
@@ -508,8 +491,7 @@ Relevant context:
 
 {last_line}"""
 
-    client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-    stream = client.chat.completions.create(
+    stream = get_openai_client().chat.completions.create(
         model=GPT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -524,23 +506,54 @@ Relevant context:
             yield content
 
 
-def retrieve_context(query: str, zh_query: str | None) -> list[dict]:
-    """向量检索官网内容 + qa_bank，去重后取前 MAX_CONTEXT_CHUNKS 条"""
+def query_variants(query: str, zh_query: str | None) -> list[str]:
+    """用于检索的问题写法：原文 + 中文翻译（英文提问）/ 简体写法（繁体提问，qa_bank 是简体）"""
+    variants = [query]
     if zh_query:
-        hits    = search_faiss(query) + search_faiss(zh_query)
-        qa_hits = search_qa_bank(query) + search_qa_bank(zh_query)
-    else:
-        hits    = search_faiss(query)
-        qa_hits = search_qa_bank(query)
+        variants.append(zh_query)
+    if lang_code == "zh-TW":
+        variants.append(_convert(query, "t2s"))
+    return list(dict.fromkeys(v for v in variants if v.strip()))
 
+
+def _search(load_store, vectors: list[list[float]], k: int) -> list[dict]:
+    try:
+        store = load_store()
+    except Exception as e:
+        print(f"[向量库加载失败] {type(e).__name__}: {e}")
+        return []
+    out = []
+    for v in vectors:
+        out += [{"text": d.page_content, "source": d.metadata.get("source", "")}
+                for d in store.similarity_search_by_vector(v, k=k)]
+    return out
+
+
+def _dedupe(hits: list[dict], limit: int) -> list[dict]:
     seen, out = set(), []
-    for h in qa_hits + hits:
+    for h in hits:
         key = h["text"][:100]
         if key not in seen:
-            out.append(h)
             seen.add(key)
-    # 送进 GPT 的段落和"参考来源"里展示的保持一致
-    return out[:MAX_CONTEXT_CHUNKS]
+            out.append(h)
+    return out[:limit]
+
+
+def retrieve_context(query: str, zh_query: str | None) -> tuple[list[dict], str]:
+    """
+    向量检索 qa_bank + 官网内容。所有问题写法一次性算向量（只调一次 embedding API），
+    再用同一组向量查两个库。qa_bank 在前（staff 审核过的答案优先）。
+    返回 (hits, error)：error 非空表示 OpenAI 出错，供 staff 在 unanswered 里查看。
+    """
+    variants = query_variants(query, zh_query)
+    try:
+        vectors = get_embeddings().embed_documents(variants)
+    except Exception as e:
+        print(f"[问题向量计算失败] {type(e).__name__}: {e}")
+        return [], f"[系统错误，未能检索资料] {type(e).__name__}"
+    qa_hits = _dedupe(_search(load_qa_store, vectors, QA_K), MAX_QA_CHUNKS)
+    web_hits = _dedupe(_search(load_faiss_store, vectors, WEB_K), MAX_WEB_CHUNKS)
+    return qa_hits + web_hits, ""
 
 
 def render_answer(query: str, chunks: list[dict], strict: bool = False) -> tuple[str | None, str]:
@@ -598,11 +611,11 @@ with st.container():
 # =========================
 if query:
     conv_id  = get_or_create_conversation_id()
-    name     = st.session_state.get("user_name", "")
+    first    = st.session_state.get("user_first", "")
+    last     = st.session_state.get("user_last", "")
     email    = st.session_state.get("user_email", "")
     phone    = st.session_state.get("user_phone", "")
     program  = st.session_state.get("user_program", "")
-    first, _, last = name.partition(" ")
 
     # 输入框发送后会清空，所以把刚问的问题显示在回答上方
     st.markdown(f"**{t('your_question')}** {escape_markdown(query)}")
@@ -627,7 +640,7 @@ if query:
     # 第二步：没有确认命中（且 OpenAI 没出错）→ 向量检索 + GPT 生成
     if answer is None and not error:
         with st.spinner(t("searching")):
-            hits = retrieve_context(query, zh_query)
+            hits, error = retrieve_context(query, zh_query)
         if hits:
             answer, error = render_answer(query, hits)
 
@@ -639,7 +652,7 @@ if query:
         with st.expander(t("source_expander"), expanded=False):
             for i, h in enumerate(hits, 1):
                 src = f"[{h['source']}]({h['source']})" if h["source"].startswith("http") else h["source"]
-                st.markdown(f"**{i}.** {h['text'][:300]}…\n\n<sub>{t('source_label')}: {src}</sub>",
+                st.markdown(f"**{i}.** {escape_markdown(h['text'][:300])}…\n\n<sub>{t('source_label')}: {src}</sub>",
                             unsafe_allow_html=True)
                 st.markdown("<hr>", unsafe_allow_html=True)
     else:

@@ -32,6 +32,19 @@ git checkout dev
 - 不单独部署测试 App：改动在本地 `streamlit run app.py` 验证即可。
 - 密钥只在 Streamlit Cloud 后台（App → Settings → Secrets）；本地运行需把后台 Secrets 复制到 `.streamlit/secrets.toml`。
 - **本地务必连测试 Sheet**：本地 `secrets.toml` 里的 `GOOGLE_SHEET_ID` / `GOOGLE_SHEET_B_ID` 应指向生产 Sheet 的测试副本（副本需共享给同一个 service account），否则本地提问、报名会写进生产的 signups / pending / unanswered。线上用的是后台 Secrets，不受影响。
+  - 测试 Sheet：`Testing_Admission_Chatbot_User_Signup`（tab `signups`）、`Testing_CWTS_AdBot_Knowledge`（tab `qa_bank` / `pending` / `unanswered`）。
+  - 生产 Sheet：`Admission_Chatbot_User_Signup`、`CWTS_AdBot_Knowledge`。**不要在本地连生产 Sheet 做测试。**
+- service account：`admission-bot@admissionchatbot-471103.iam.gserviceaccount.com`，新 Sheet 需共享给它（编辑者）。
+- Sheet 写入按第一行表头名字对齐（`utils.build_row`），staff 可以加列、调列顺序；但不要改已有列的表头名。
+- **OpenAI 余额**：余额用完时所有需要 GPT 的问题都会答不了（线上表现为"暂时无法回答"）。在 platform.openai.com → Settings → Billing 充值，建议开自动充值 / 余额提醒。
+
+## 回答质量基准测试
+- `.venv/bin/python scripts/bench_answers.py`：用真实 OpenAI + 测试 Sheet 的 qa_bank 跑一组典型问题（近义改写、只差一个词的易混问题、只有官网有答案、确实答不了），打印回答/耗时/写入哪个 tab。不写任何 Sheet，会花少量 OpenAI 额度。
+- 改了检索、prompt、模糊匹配后都应跑一遍；对比 main：`git worktree add /tmp/main_wt main` 后 `.venv/bin/python scripts/bench_answers.py /tmp/main_wt main`。
+
+## 索引重建
+- `scraper.py` 爬 cwts.edu 并重建 `faiss_index/`（官网）和 `faiss_index_qa/`（qa_bank 后备），两者都提交在 git 里；线上每 24 小时后台重建一次。
+- 抓到的页面少于 `MIN_PAGES` 时视为异常，保留旧索引。手动重建：`.venv/bin/python scraper.py`（需真实 OpenAI key）。
 
 ## CI（GitHub Actions）
 - `.github/workflows/tests.yml`：push 到 dev / main、或向 main 发 PR 时自动跑 pytest。

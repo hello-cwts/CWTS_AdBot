@@ -113,6 +113,8 @@ def fix_creds_json(raw: str) -> str:
 
 
 ALLOWED_DOMAIN = "cwts.edu"
+NON_HTML_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+                       ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".zip", ".mp3", ".mp4")
 
 
 def is_allowed_url(url: str) -> bool:
@@ -123,8 +125,28 @@ def is_allowed_url(url: str) -> bool:
     host = parsed.hostname or ""
     if host != ALLOWED_DOMAIN and not host.endswith("." + ALLOWED_DOMAIN):
         return False
-    path = parsed.path.lower()
-    return any(kw in path for kw in ALLOWED_PATH_KEYWORDS)
+    path = parsed.path.lower().rstrip("/")
+    if path.endswith(NON_HTML_EXTENSIONS):
+        return False
+    # 按路径段前缀匹配："/zh/about" 匹配 "/zh/about" 和 "/zh/about/..."，
+    # 不匹配 "/en/zh/about" 或 "/zh/aboutus-old"
+    return any(path == kw or path.startswith(kw + "/") for kw in ALLOWED_PATH_KEYWORDS)
+
+
+def normalize_url(url: str) -> str:
+    """
+    爬虫去重用：同一页面的不同写法归一成一个网址。
+    小写 scheme/host、去掉默认端口、# 锚点、? 参数和末尾斜杠
+    （"…/tuition-scholarship" 与 "…/tuition-scholarship/" 视为同一页）。
+    """
+    parsed = urlparse(url.strip())
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+        host = f"{host}:{port}"
+    path = parsed.path.rstrip("/") or "/"
+    return f"{scheme}://{host}{path}"
 
 
 # =========================

@@ -6,7 +6,9 @@ scraper.py
   - 自动：app.py 后台线程每 24 小时触发一次
 """
 
+import os
 import re
+import shutil
 import time
 import json
 import tomllib
@@ -21,9 +23,9 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
-from utils import fix_creds_json, is_allowed_url
+from utils import fix_creds_json, is_allowed_url, normalize_url
 from config import (
-    SEED_URLS, ALLOWED_PATH_KEYWORDS, MAX_PAGES, REQUEST_DELAY,
+    SEED_URLS, ALLOWED_PATH_KEYWORDS, MAX_PAGES, MIN_PAGES, REQUEST_DELAY,
     FAISS_INDEX_PATH, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL,
 )
 
@@ -62,15 +64,21 @@ def load_secrets() -> dict:
 # 网站爬取
 # =========================
 def fetch_page(url: str) -> tuple[str | None, list[str]]:
-    """请求一次页面，返回 (正文, 页面内链接)。正文太短返回 None。"""
+    """请求一次页面，返回 (正文, 页面内链接)。非 HTML 或正文太短返回 None。"""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; CWTSBot/1.0)"}
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
+        ctype = resp.headers.get("Content-Type", "").lower()
+        if ctype and "html" not in ctype:
+            print(f"  [跳过] {url} — 非网页内容 ({ctype})")
+            return None, []
+        # 响应头没写 charset 时 requests 会按 ISO-8859-1 解码，中文会乱码；改用内容探测的编码
+        if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
+            resp.encoding = resp.apparent_encoding
         soup = BeautifulSoup(resp.text, "html.parser")
         # 先收集链接（nav/footer 里的链接也要跟踪），再删掉这些区块取正文
-        links = [urljoin(url, a["href"]).split("#")[0].split("?")[0]
-                 for a in soup.find_all("a", href=True)]
+        links = [normalize_url(urljoin(url, a["href"])) for a in soup.find_all("a", href=True)]
         for tag in soup(["nav", "footer", "script", "style", "header", "aside"]):
             tag.decompose()
         main = soup.find("main") or soup.find("article") or soup.find("body")
@@ -85,7 +93,8 @@ def fetch_page(url: str) -> tuple[str | None, list[str]]:
 
 def crawl(seed_urls: list[str], max_pages: int = MAX_PAGES) -> list[Document]:
     visited = set()
-    queue = list(seed_urls)
+    # 网址先归一化，避免同一页面因末尾斜杠等差异被抓两次
+    queue = [normalize_url(u) for u in seed_urls]
     documents = []
 
     print(f"开始抓取，种子页面数：{len(seed_urls)}")
@@ -114,6 +123,21 @@ def crawl(seed_urls: list[str], max_pages: int = MAX_PAGES) -> list[Document]:
 # =========================
 # 向量库构建
 # =========================
+def save_index_atomically(db, path: str) -> None:
+    """
+    先写到临时目录，写完再替换正式目录，避免 app 在写到一半时读到不完整的索引。
+    （目录替换不是严格原子的，但不完整的窗口从"整个写入过程"缩短到两次 rename 之间。）
+    """
+    tmp, old = f"{path}.tmp", f"{path}.old"
+    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(old, ignore_errors=True)
+    db.save_local(tmp)
+    if os.path.exists(path):
+        os.rename(path, old)
+    os.rename(tmp, path)
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def build_faiss_index(documents: list[Document], openai_api_key: str) -> int:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
@@ -125,7 +149,7 @@ def build_faiss_index(documents: list[Document], openai_api_key: str) -> int:
 
     print("正在计算向量（网站内容）...")
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key, model=EMBEDDING_MODEL)
-    FAISS.from_documents(chunks, embeddings).save_local(FAISS_INDEX_PATH)
+    save_index_atomically(FAISS.from_documents(chunks, embeddings), FAISS_INDEX_PATH)
     print(f"网站向量库已保存到 {FAISS_INDEX_PATH}/")
     return len(chunks)
 
@@ -169,7 +193,7 @@ def build_qa_faiss_index(openai_api_key: str, secrets: dict) -> int:
 
     print(f"  正在为 qa_bank {len(docs)} 条建向量库...")
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key, model=EMBEDDING_MODEL)
-    FAISS.from_documents(docs, embeddings).save_local("faiss_index_qa")
+    save_index_atomically(FAISS.from_documents(docs, embeddings), "faiss_index_qa")
     print(f"  qa_bank 向量库已保存到 faiss_index_qa/")
     return len(docs)
 
@@ -183,8 +207,9 @@ def rebuild_index(openai_api_key: str) -> bool:
 
     # 1) 网站向量库
     docs = crawl(SEED_URLS)
-    if not docs:
-        print("未抓到任何内容，终止。")
+    if len(docs) < MIN_PAGES:
+        # 官网部分宕机/改版时只抓到少量页面，用它覆盖会让机器人大面积答不了；保留旧索引
+        print(f"只抓到 {len(docs)} 个页面（少于 MIN_PAGES={MIN_PAGES}），保留旧索引，终止。")
         return False
     n = build_faiss_index(docs, openai_api_key)
     print(f"网站向量库完成，共 {n} 个段落")

@@ -22,3 +22,5 @@ main
 smart_qa_app.py
 import json.py
 build_faiss.py
+# 基准测试输出
+scripts/bench_*.json

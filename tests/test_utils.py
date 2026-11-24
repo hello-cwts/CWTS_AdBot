@@ -14,6 +14,7 @@ from utils import (  # noqa: E402
     fix_creds_json,
     fuzzy_candidates,
     is_allowed_url,
+    normalize_url,
     is_unanswerable,
     may_be_unanswerable,
     normalize,
@@ -151,6 +152,10 @@ def test_allowed_urls(url):
     "https://cwts.edu@evil.com/zh/admissions/", # user@ 伪装，实际访问 evil.com
     "mailto:admissions@cwts.edu",               # 非 http(s)
     "ftp://www.cwts.edu/zh/admissions/",
+    "https://www.cwts.edu/en/zh/about/",        # 关键词出现在路径中间
+    "https://www.cwts.edu/zh/aboutus-old/",     # 前缀相同但不是同一路径段
+    "https://www.cwts.edu/zh/admissions/form.pdf",   # 非网页文件
+    "https://www.cwts.edu/zh/about/campus.JPG",
 ])
 def test_disallowed_urls(url):
     assert not is_allowed_url(url)
@@ -200,3 +205,19 @@ def test_build_row_header_match_ignores_case_and_spaces():
 def test_build_row_trims_trailing_empty_headers_and_maps_none():
     row, _ = build_row(["a", "b", "", ""], {"a": None, "b": 1})
     assert row == ["", 1]
+
+
+# ---------- 爬虫网址归一化 ----------
+@pytest.mark.parametrize("a,b", [
+    ("https://www.cwts.edu/zh/admissions/tuition-scholarship/", "https://www.cwts.edu/zh/admissions/tuition-scholarship"),
+    ("https://WWW.CWTS.EDU:443/zh/about/", "https://www.cwts.edu/zh/about"),
+    ("https://www.cwts.edu/zh/about/#history", "https://www.cwts.edu/zh/about?ref=nav"),
+])
+def test_normalize_url_merges_same_page(a, b):
+    assert normalize_url(a) == normalize_url(b)
+
+
+def test_normalize_url_keeps_path_case_and_distinct_pages():
+    assert normalize_url("https://www.cwts.edu/zh/about") != normalize_url("https://www.cwts.edu/zh/academic")
+    assert normalize_url("https://www.cwts.edu/") == "https://www.cwts.edu/"
+    assert normalize_url("http://www.cwts.edu:8080/zh/") == "http://www.cwts.edu:8080/zh"

@@ -74,6 +74,7 @@ ALLOWED_PATH_KEYWORDS = [
 ]
 
 MAX_PAGES = 120         # 最多抓取页面数
+MIN_PAGES = 20          # 重建时少于这个页面数视为抓取异常（如官网部分宕机），保留旧索引
 REQUEST_DELAY = 0.5     # 每次请求间隔（秒）
 
 # ---- 向量库 ----
