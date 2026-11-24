@@ -98,9 +98,15 @@ def _append_by_header(ws, default_headers: list[str], values: dict) -> None:
     if not any(str(h).strip() for h in headers):
         ws.update([default_headers], "A1")
         headers = default_headers
-    row, missing = build_row(headers, values)
-    if missing:
-        print(f"[{ws.title}] 表头里没有这些列，对应的值未写入：{missing}")
+    if "conversation_id" not in {str(h).strip().lower() for h in headers}:
+        # 第一行不像表头（被改名/手动建的 tab 第一行就是数据）：按名字对齐会写出空行、数据悄悄丢失，
+        # 退回按默认列顺序写入，保证数据不丢
+        print(f"[{ws.title}] 第一行不是预期的表头 {headers[:5]}…，改按默认列顺序写入，请检查表头")
+        row = ["" if values.get(h) is None else values.get(h, "") for h in default_headers]
+    else:
+        row, missing = build_row(headers, values)
+        if missing:
+            print(f"[{ws.title}] 表头里没有这些列，对应的值未写入：{missing}")
     ws.append_row(row, table_range="A1")
 
 

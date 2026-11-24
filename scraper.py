@@ -134,7 +134,12 @@ def save_index_atomically(db, path: str) -> None:
     db.save_local(tmp)
     if os.path.exists(path):
         os.rename(path, old)
-    os.rename(tmp, path)
+    try:
+        os.rename(tmp, path)
+    except Exception:
+        if os.path.exists(old) and not os.path.exists(path):
+            os.rename(old, path)  # 换新失败就把旧索引放回去
+        raise
     shutil.rmtree(old, ignore_errors=True)
 
 
