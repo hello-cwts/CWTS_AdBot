@@ -477,13 +477,13 @@ Be warm, concise, and encouraging.
 2. If the context contains relevant information, even partial, use it to give the best possible answer.
 3. If the question is only partly covered, answer the covered part and suggest contacting admissions@cwts.edu for the rest.
 4. Be precise about which degree program or student group a fact applies to; never apply one program's facts to another.
-5. Only reply with {UNANSWERABLE_MARKER} (alone, nothing else) if nothing in the context is related to the question.
+5. If the context does not contain the fact actually asked for (even when it covers the same general topic), reply with {UNANSWERABLE_MARKER} (alone, nothing else). Never write an answer saying the information is not mentioned / not provided.
 6. Do NOT guess or make up information not present in the context.""")
 
     last_line = (
         f'Answer in {lang_name} only if one Q&A pair is the same question; otherwise reply with exactly "{UNANSWERABLE_MARKER}".'
         if strict else
-        f'Answer in {lang_name}. Only reply with exactly "{UNANSWERABLE_MARKER}" if the context is completely unrelated.'
+        f'Answer in {lang_name}. If the context does not contain the fact asked for, reply with exactly "{UNANSWERABLE_MARKER}".'
     )
     user_prompt = f"""Question: {query}
 
